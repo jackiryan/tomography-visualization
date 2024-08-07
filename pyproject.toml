@@ -1,0 +1,53 @@
+[build-system]
+requires = ["flit_core >= 3.4, < 4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "nc2gltf"
+authors = [
+    { name = "Jacqueline Ryan", email = "Jacqueline.Ryan@jpl.caltech.edu" }
+]
+description = "Utility for converting (cloud tomography) netCDF files to gltf 3D models."
+readme = "README.md"
+requires-python = ">=3.9"
+version = "0.1.0"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+  "Environment :: Console",
+]
+dependencies = [
+    "gltflib >= 1.0.13",
+    "netCDF4 >= 1.7.1.post1",
+    "numpy >= 2.0.1"
+]
+
+[project.optional-dependencies]
+dev = [
+  "flit",
+  "mypy",
+  "pyright"
+]
+
+[tool.flit.module]
+name = "nc2gltf"
+
+# [options]
+# py_modules = ["nc2gltf"]
+
+[project.scripts]
+nc2gltf = "nc2gltf.cli:main"
+
+[tool.pyright]
+pythonVersion = "3.12"
+include = ["src"]
+strict = ["src"]
+
+[tool.mypy]
+python_version = "3.12"
+show_error_codes = true

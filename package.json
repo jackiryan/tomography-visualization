@@ -1,0 +1,17 @@
+{
+  "name": "cloudtomo_viewer",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "serve": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.167.1"
+  },
+  "devDependencies": {
+    "vite": "^5.3.5",
+    "vite-plugin-restart": "^0.4.1"
+  }
+}
