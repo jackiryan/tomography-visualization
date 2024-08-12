@@ -11,8 +11,8 @@ function init() {
 
     camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 3000);
     camera.position.y = 100;
-    camera.position.z = -300;
-    
+    camera.position.z = -250;
+
 
     renderer = new THREE.WebGLRenderer({
         antialias: true
@@ -28,7 +28,7 @@ function init() {
     const loader = new THREE.GLTFLoader();
     loader.load('./ARM_28800s_QC.glb', function (gltf) {
         model = gltf.scene;
-        rotateModel(model);
+        positionModel(model);
         scene.add(model);
     }, undefined, function (error) {
         console.error(error);
@@ -45,9 +45,9 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-function rotateModel(model) {
+function positionModel(model) {
     // Rotate -90 degrees about the x, i.e., convert from z up to y up convention
-    model.rotation.x = -Math.PI / 2.0;
+    //model.rotation.x = -Math.PI / 2.0;
     // Push the model back 200 units away from the camera (the camera is at z=-300)
     model.position.z += 200;
     // Push the model 200 units right relative to the camera

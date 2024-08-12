@@ -1,14 +1,12 @@
 """CLI frontend for converting netCDF to gltf."""
+
 import argparse
 import pathlib
 
 from . import convert
 
 
-def process_file(
-        args: argparse.Namespace,
-        parser: argparse.ArgumentParser
-) -> None:
+def process_file(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     try:
         inpath = args.file.expanduser().resolve()
     except RuntimeError:
@@ -30,7 +28,7 @@ def process_file(
         outpath = outpath / (inpath.stem + ".glb")
     elif outpath.suffix.lower() not in [".glb", ".gltf"]:
         parser.error("outfile must be either a .glb/.gltf filepath or a directory")
-    
+
     use_var = args.variable or "QC"
 
     convert.convert_nc_gltf(inpath, outpath, use_var)
@@ -43,7 +41,7 @@ def get_parser() -> argparse.ArgumentParser:
         "file",
         type=pathlib.Path,
         metavar="FILE",
-        help="input file in netCDF (.nc) format, the QC variable is required"
+        help="input file in netCDF (.nc) format, the QC variable is required",
     )
     parser.add_argument(
         "-o",
@@ -53,7 +51,7 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "path to an output file to use instead of the default, which would be "
             "the same name as the input file, but with the .glb extension"
-        )
+        ),
     )
     parser.add_argument(
         "-v",
@@ -62,7 +60,7 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "optionally specify the variable name to convert to a point cloud."
             " default is QC"
-        )
+        ),
     )
     # parser.add_argument(
     #     "-v",
@@ -80,10 +78,9 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
-
 def main() -> None:
     """Process config and CLI arguments then initiate processing."""
-    parser: argparse.ArgumentParser = get_parser()
+    parser = get_parser()
     args = parser.parse_args()
 
     # if args.logfile is not None and args.logfile.exists():
@@ -91,6 +88,3 @@ def main() -> None:
     # set_console_logger(args.verbose, args.logfile)
 
     process_file(args, parser)
-
-
-
