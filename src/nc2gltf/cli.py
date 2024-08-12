@@ -31,7 +31,9 @@ def process_file(
     elif outpath.suffix.lower() not in [".glb", ".gltf"]:
         parser.error("outfile must be either a .glb/.gltf filepath or a directory")
     
-    convert.convert_nc_gltf(inpath, outpath)
+    use_var = args.variable or "QC"
+
+    convert.convert_nc_gltf(inpath, outpath, use_var)
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -51,6 +53,15 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "path to an output file to use instead of the default, which would be "
             "the same name as the input file, but with the .glb extension"
+        )
+    )
+    parser.add_argument(
+        "-v",
+        "--variable",
+        type=str,
+        help=(
+            "optionally specify the variable name to convert to a point cloud."
+            " default is QC"
         )
     )
     # parser.add_argument(

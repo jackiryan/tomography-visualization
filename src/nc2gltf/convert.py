@@ -73,11 +73,12 @@ def get_nonzero_points(
 
 def convert_nc_gltf(
         nc_file: pathlib.Path,
-        gltf_file: pathlib.Path
+        gltf_file: pathlib.Path,
+        variable: str = "QC"
 ) -> bool:
     rootgrp = netCDF4.Dataset(nc_file, "r")
     # Raises KeyError if QC is not present in the netCDF
-    qcvar = rootgrp.variables["QC"]
+    qcvar = rootgrp.variables[variable]
     nonzero_points = get_nonzero_points(qcvar)
     create_gltf_model(gltf_file, nonzero_points)
     return True
