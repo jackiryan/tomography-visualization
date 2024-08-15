@@ -28,7 +28,18 @@ function init() {
     const loader = new THREE.GLTFLoader();
     loader.load('./ARM_28800s_QC.glb', function (gltf) {
         model = gltf.scene;
+
+        const pointMaterial = createMaterial();
+        /*
+        model.traverse(function (node) {
+            if (node.isMesh) {
+                console.log("Setting material");
+                node.material = pointMaterial;
+            }
+        }); */
+        model.material = pointMaterial;
         positionModel(model);
+
         scene.add(model);
     }, undefined, function (error) {
         console.error(error);
@@ -37,6 +48,28 @@ function init() {
     controls = new THREE.OrbitControls(camera, renderer.domElement);
 
     window.addEventListener('resize', onWindowResize, false);
+}
+
+function createMaterial() {
+    const vertexShader = `
+        void main() {
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = 5.0 / -mvPosition.z;
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    `;
+
+    const fragmentShader = `
+        void main() {
+            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+        }
+    `;
+
+    const material = new THREE.ShaderMaterial({
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader
+    });
+    return material;
 }
 
 function onWindowResize() {

@@ -7,6 +7,8 @@ from . import convert
 
 
 def process_file(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Perform basic checks on filepath arguments before calling convert_nc_gltf
+    function."""
     try:
         inpath = args.file.expanduser().resolve()
     except RuntimeError:
