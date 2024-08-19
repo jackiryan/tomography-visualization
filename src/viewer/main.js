@@ -6,19 +6,21 @@ import Stats from 'three/addons/libs/stats.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Sky } from './sky.js';
 
 let container, stats;
 let camera, controls, scene, renderer;
-let model, image_plane, clip_plane;
+let model, image_plane, clip_plane, sphere;
+let sky, sun;
 
-init();
+await init();
 
-function init() {
+async function init() {
 
     container = document.createElement('div');
     document.body.appendChild(container);
 
-    camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 3000);
+    camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 5000);
     camera.position.set(0, 100, -250);
 
     scene = new THREE.Scene();
@@ -28,6 +30,8 @@ function init() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setAnimationLoop(animate);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.5;
     renderer.localClippingEnabled = true;
     container.appendChild(renderer.domElement);
 
@@ -44,6 +48,9 @@ function init() {
         });
         positionModel(model);
         scene.add(model);
+
+        initSky();
+
         initGUI();
     }, undefined, function (error) {
         console.error(`Failed to load point cloud model: ${error}`);
@@ -52,11 +59,13 @@ function init() {
     const textureLoader = new THREE.TextureLoader();
 
     // scene background, this is derived from an HDRI used for tonemapping but works okay as a background too
+    /*
     textureLoader.load('./qwantani_puresky_4k.avif', function (texture) {
         texture.mapping = THREE.EquirectangularReflectionMapping;
         texture.colorSpace = THREE.SRGBColorSpace;
         scene.background = texture;
     });
+    */
 
     const plane_geo = new THREE.PlaneGeometry(400, 400);
     textureLoader.load('./cloudrender_lowres.png', function (texture) {
@@ -69,6 +78,17 @@ function init() {
         image_plane.rotation.x = -Math.PI / 2.0;
         scene.add(image_plane);
     });
+
+    const sphere_size = 10000;
+    const sphere_geo = new THREE.PlaneGeometry(sphere_size, sphere_size);
+    const sphere_mat = new THREE.MeshBasicMaterial({
+        color: 0x0a539e
+    });
+    sphere = new THREE.Mesh(sphere_geo, sphere_mat);
+    scene.add(sphere);
+    sphere.rotation.x = -Math.PI / 2.0;
+    sphere.position.set(0, -1, 0);
+
 
     stats = new Stats();
     container.appendChild(stats.dom);
@@ -113,6 +133,16 @@ function createMaterial() {
     return material;
 }
 
+function initSky() {
+    const starTex = new THREE.TextureLoader().load('./starmap_2020_4k.avif');
+    starTex.colorSpace = THREE.SRGBColorSpace;
+    starTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    sky = new Sky(starTex);
+    sky.scale.setScalar(450000);
+    scene.add(sky);
+    sun = new THREE.Vector3();
+}
+
 function initGUI() {
     const gui = new GUI(),
         props = {
@@ -124,7 +154,7 @@ function initGUI() {
             },
             get 'Axis'() {
                 if (clip_plane.normal == new THREE.Vector3(-1, 0, 0)) {
-
+                    return 'X';
                 }
                 else if (clip_plane.normal == new THREE.Vector3(0, -1, 0)) {
                     return 'Y';
@@ -151,12 +181,57 @@ function initGUI() {
             },
             set 'Plane'(v) {
                 clip_plane.constant = v;
-            }
+            },
+        },
+        folderSky = gui.addFolder('Sky Parameters'),
+        propsSky = {
+            turbidity: 10,
+            rayleigh: 3,
+            mieCoefficient: 0.005,
+            mieDirectionalG: 0.7,
+            elevation: 2,
+            azimuth: 180,
+            exposure: renderer.toneMappingExposure,
+            atmStart: -1,
+            atmStop: 1
         };
+
+    function skyChanged() {
+        const uniforms = sky.material.uniforms;
+        uniforms['turbidity'].value = propsSky.turbidity;
+        uniforms['rayleigh'].value = propsSky.rayleigh;
+        uniforms['mieCoefficient'].value = propsSky.mieCoefficient;
+        uniforms['mieDirectionalG'].value = propsSky.mieDirectionalG;
+        uniforms['uAtmStart'].value = propsSky.atmStart;
+        uniforms['uAtmStop'].value = propsSky.atmStop;
+
+        const phi = THREE.MathUtils.degToRad(90 - propsSky.elevation);
+        const theta = THREE.MathUtils.degToRad(propsSky.azimuth);
+
+        sun.setFromSphericalCoords(1, phi, theta);
+
+        uniforms['sunPosition'].value.copy(sun);
+
+        renderer.toneMappingExposure = propsSky.exposure;
+        renderer.render(scene, camera);
+
+    }
 
     gui.add(props, 'Enabled');
     gui.add(props, 'Axis', ['X', 'Y', 'Z']);
     gui.add(props, 'Plane', -250, 250);
+
+    folderSky.add(propsSky, 'turbidity', 0.0, 20.0, 0.1).onChange(skyChanged);
+    folderSky.add(propsSky, 'rayleigh', 0.0, 4, 0.001).onChange(skyChanged);
+    folderSky.add(propsSky, 'mieCoefficient', 0.0, 0.1, 0.001).onChange(skyChanged);
+    folderSky.add(propsSky, 'mieDirectionalG', 0.0, 1, 0.001).onChange(skyChanged);
+    folderSky.add(propsSky, 'elevation', -10, 90, 0.1).onChange(skyChanged);
+    folderSky.add(propsSky, 'azimuth', - 180, 180, 0.1).onChange(skyChanged);
+    folderSky.add(propsSky, 'exposure', 0, 1, 0.0001).onChange(skyChanged);
+    folderSky.add(propsSky, 'atmStart', -1, 1, 0.01).onChange(skyChanged);
+    folderSky.add(propsSky, 'atmStop', -1, 1, 0.01).onChange(skyChanged);
+
+    skyChanged();
 }
 
 function onWindowResize() {
