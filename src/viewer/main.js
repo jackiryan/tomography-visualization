@@ -28,18 +28,12 @@ function init() {
     const loader = new THREE.GLTFLoader();
     loader.load('./ARM_28800s_QC.glb', function (gltf) {
         model = gltf.scene;
-
-        const pointMaterial = createMaterial();
-        /*
-        model.traverse(function (node) {
-            if (node.isMesh) {
-                console.log("Setting material");
-                node.material = pointMaterial;
+        model.traverse((node) => {
+            if (node instanceof THREE.Points) {
+                node.material = createMaterial();
             }
-        }); */
-        model.material = pointMaterial;
+        });
         positionModel(model);
-
         scene.add(model);
     }, undefined, function (error) {
         console.error(error);
@@ -54,7 +48,7 @@ function createMaterial() {
     const vertexShader = `
         void main() {
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = 5.0 / -mvPosition.z;
+            gl_PointSize = 500.0 / -mvPosition.z;
             gl_Position = projectionMatrix * mvPosition;
         }
     `;
