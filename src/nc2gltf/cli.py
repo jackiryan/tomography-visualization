@@ -16,12 +16,13 @@ def process_file(args: argparse.Namespace, parser: argparse.ArgumentParser) -> N
     # Check that the input file is a netCDF file. Only the .nc extension is allowed
     if not inpath.is_file() or inpath.suffix.lower() != ".nc":
         parser.error("provided input is not a netCDF format file")
+
     try:
-        outpath: pathlib.Path = args.outfile.expanduser().resolve()
+        outpath = args.outfile.expanduser().resolve()
     except AttributeError:
         # if args.outfile is None
-        parentpath = pathlib.PurePath(inpath).parent
-        outpath = pathlib.Path(parentpath.joinpath(inpath.stem + ".glb"))
+        in_parentpath = pathlib.PurePath(inpath).parent
+        outpath = pathlib.Path(in_parentpath.joinpath(inpath.stem + ".glb"))
     except RuntimeError:
         parser.error("could not resolve output path")
     if outpath.is_dir():
@@ -30,10 +31,17 @@ def process_file(args: argparse.Namespace, parser: argparse.ArgumentParser) -> N
         outpath = outpath / (inpath.stem + ".glb")
     elif outpath.suffix.lower() not in [".glb", ".gltf"]:
         parser.error("outfile must be either a .glb/.gltf filepath or a directory")
+    try:
+        respath = args.resource.expanduser().resolve()
+    except AttributeError:
+        out_parentpath = pathlib.PurePath(outpath).parent
+        respath = pathlib.Path(out_parentpath.joinpath(outpath.stem + ".bin"))
+    except RuntimeError:
+        parser.error("could not resolve resource path")
 
     use_var = args.variable or "QC"
 
-    convert.convert_nc_gltf(inpath, outpath, use_var)
+    convert.convert_nc_gltf(inpath, outpath, respath, use_var)
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -62,6 +70,16 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "optionally specify the variable name to convert to a point cloud."
             " default is QC"
+        ),
+    )
+    parser.add_argument(
+        "-r",
+        "--resource",
+        type=pathlib.Path,
+        metavar="FILE",
+        help=(
+            "specify resource name (vertices binary file) if exporting to gltf."
+            " default is the same name as the model but with .bin extension"
         ),
     )
     # parser.add_argument(

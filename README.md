@@ -39,3 +39,11 @@ Javascript application:
 npm run dev
 ```
 
+## Other notes
+
+The equirectangular map texture is an AVIF-encoded image originally derived from a .exr HDRI tonemapping file.
+
+File source: [https://polyhaven.com/a/qwantani_puresky](https://polyhaven.com/a/qwantani_puresky)
+
+AVIF encoding settings (YUV 444 is implied): `avifenc --min 0 --max 63 -a end-usage=q -a cq-level=28 -a tune=ssim --speed 3 static/qwantani_puresky_4k.png static/qwantani_puresky_4k.avif`
+

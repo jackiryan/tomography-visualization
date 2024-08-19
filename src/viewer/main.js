@@ -1,32 +1,38 @@
 // main.js
-let container;
-let camera, scene, renderer;
+import * as THREE from 'three';
+
+import Stats from 'three/addons/libs/stats.module.js';
+
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+let container, stats;
+let camera, controls, scene, renderer;
 let model;
 
 init();
-animate();
 
 function init() {
-    scene = new THREE.Scene();
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
 
     camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 3000);
-    camera.position.y = 100;
-    camera.position.z = -250;
+    camera.position.set(0, 100, -250);
 
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000011);
 
-    renderer = new THREE.WebGLRenderer({
-        antialias: true
-    });
+    renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor('#000011');
-    document.body.appendChild(renderer.domElement);
+    renderer.setAnimationLoop(animate);
+    container.appendChild(renderer.domElement);
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 1);
     scene.add(ambientLight);
 
-    const loader = new THREE.GLTFLoader();
-    loader.load('./ARM_28800s_QC.glb', function (gltf) {
+    new GLTFLoader().load('./ARM_28800s_QC.gltf', function (gltf) {
         model = gltf.scene;
         model.traverse((node) => {
             if (node instanceof THREE.Points) {
@@ -36,10 +42,19 @@ function init() {
         positionModel(model);
         scene.add(model);
     }, undefined, function (error) {
-        console.error(error);
+        console.error(`Failed to load point cloud model: ${error}`);
     });
 
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    new THREE.TextureLoader().load('./qwantani_puresky_4k.avif', function (texture) {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        scene.background = texture;
+    });
+
+    stats = new Stats();
+    container.appendChild(stats.dom);
+
+    controls = new OrbitControls(camera, renderer.domElement);
 
     window.addEventListener('resize', onWindowResize, false);
 }
@@ -48,6 +63,7 @@ function createMaterial() {
     const vertexShader = `
         void main() {
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            // increasing the numerator increases the size of the points
             gl_PointSize = 500.0 / -mvPosition.z;
             gl_Position = projectionMatrix * mvPosition;
         }
@@ -85,6 +101,7 @@ function animate() {
     requestAnimationFrame(animate);
 
     controls.update();
+    stats.update();
 
     renderer.render(scene, camera);
 }

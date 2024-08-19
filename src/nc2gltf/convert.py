@@ -36,7 +36,12 @@ def create_gltf_model(
         ],
         buffers=[gltflib.Buffer(byteLength=len(vertex_data), uri=resource)],
         bufferViews=[
-            gltflib.BufferView(buffer=0, byteOffset=0, byteLength=len(vertex_data))
+            gltflib.BufferView(
+                buffer=0,
+                byteOffset=0,
+                byteLength=len(vertex_data),
+                target=gltflib.BufferTarget.ARRAY_BUFFER.value,
+            )
         ],
         accessors=[
             gltflib.Accessor(
@@ -80,7 +85,10 @@ def rotate_points(points: np.ndarray) -> np.ndarray:
 
 
 def convert_nc_gltf(
-    nc_file: pathlib.Path, gltf_file: pathlib.Path, variable: str = "QC"
+    nc_file: pathlib.Path,
+    gltf_file: pathlib.Path,
+    res_file: pathlib.Path,
+    variable: str = "QC",
 ) -> bool:
     """
     Main function for converting a netCDF dataset into a glb or gltf format point
@@ -100,7 +108,7 @@ def convert_nc_gltf(
     qcvar = rootgrp.variables[variable]
     nonzero_points = get_nonzero_points(qcvar)
     points = rotate_points(nonzero_points)
-    create_gltf_model(gltf_file, points)
+    create_gltf_model(gltf_file, points, str(res_file.name))
     # pointcloud_to_mesh(gltf_file, points)
     return True
 
