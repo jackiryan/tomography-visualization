@@ -1,12 +1,16 @@
 import gltflib
 import netCDF4
+import nrrd
 import numpy as np
+import numpy.typing as npt
 import open3d as o3d
 import pathlib
 
 
 def create_gltf_model(
-    modelpath: pathlib.Path, pointarray: np.ndarray, resource: str = "vertices.bin"
+    modelpath: pathlib.Path,
+    pointarray: npt.NDArray[np.int_],
+    resource: str = "vertices.bin",
 ) -> None:
     """
     Create a glb or gltf format 3D object from the provided array of points. The
@@ -61,12 +65,12 @@ def create_gltf_model(
     gltf.export(str(modelpath))
 
 
-def create_vertex_buffer(vertices: np.ndarray) -> bytes:
+def create_vertex_buffer(vertices: npt.NDArray[np.int_]) -> bytes:
     """flattens array of vertices to a buffer of bytes"""
     return vertices.astype(np.float32).flatten().tobytes()
 
 
-def get_nonzero_points(qcvar: netCDF4.Variable) -> np.ndarray:
+def get_nonzero_points(qcvar: netCDF4.Variable) -> npt.NDArray[np.int_]:
     """
     Determines the 3-dimensional index of each non-zero point in the provided netCDF
     variable. Input dimensions should be X-by-Y-by-Z and output dimensions will be an
@@ -79,9 +83,60 @@ def get_nonzero_points(qcvar: netCDF4.Variable) -> np.ndarray:
     return np.stack(nonzero_indices, axis=-1)
 
 
-def rotate_points(points: np.ndarray) -> np.ndarray:
+def rotate_points(points: npt.NDArray[np.int_]) -> npt.NDArray[np.int_]:
     """rotates all points in an Nx3 array by -pi/2 about the x axis"""
     return np.column_stack((points[:, 0], points[:, 2], -points[:, 1]))
+
+
+def quantize(u: float, minu: float, maxu: float, levels: int) -> int:
+    """quantize a floating point value between a min and max over N levels"""
+    rangeu = maxu - minu
+    return int(levels + (u - minu) / rangeu * levels)
+
+
+def map_points_nrrd(
+    nz_points: npt.NDArray[np.int_], vardata: netCDF4.Variable, quantization_bits: int
+) -> npt.NDArray[np.uint8 | np.uint16 | np.float64]:
+    base_shape = vardata.shape
+    # The output coordinate space has y up, so denote the z dimension of the input data
+    # as a y dimension for the output point cloud
+    min_y = np.min(nz_points[:, 2])
+    max_y = np.max(nz_points[:, 2])
+    y_shape = max_y - min_y
+
+    min_val = np.min(vardata[:])
+    max_val = np.max(vardata[:])
+    levels = (2 ** (quantization_bits - 1)) - 1
+    if quantization_bits == 8:
+        dt = np.uint8
+    elif quantization_bits == 16:
+        dt = np.uint16
+    else:
+        dt = np.float64
+    # The NRRD file will occupy the full dimensions of a single vertical slice, but
+    # only the height where there is non-zero data.
+    points = np.zeros((base_shape[0], base_shape[0], base_shape[1]), dtype=dt)
+    for pt in nz_points:
+        in_x = pt[0]
+        in_y = pt[1]
+        in_z = pt[2]
+        x = pt[0]
+        y = pt[2] - min_y - 1
+        z = base_shape[1] - pt[1] - 1
+        points[x][y][z] = quantize(vardata[in_x][in_y][in_z], min_val, max_val, levels)
+    return points
+
+
+def create_nrrd_model(
+    nrrd_file: pathlib.Path,
+    points: npt.NDArray[np.uint8 | np.uint16 | np.float64],
+    min_y: int,
+) -> None:
+    # Append the y offset to the filename
+    print(f"Y offset: {min_y} meters")
+    new_name = nrrd_file.stem + f"_{min_y}m" + nrrd_file.suffix
+    outpath = str(nrrd_file.with_name(new_name))
+    nrrd.write(outpath, points)
 
 
 def convert_nc_gltf(
@@ -99,6 +154,7 @@ def convert_nc_gltf(
 
     :params nc_file: netCDF4 file to convert to a 3D object
     :params gltf_file: output filepath, can have glb or gltf extension
+    :params res_file: when exporting gltf, vertices are stored in this filepath
     :params variable: the variable to export to a 3D point cloud
     :returns: True if successful
     :raises: KeyError if the variable keyword does not exist in the netCDF database
@@ -113,8 +169,37 @@ def convert_nc_gltf(
     return True
 
 
-def pointcloud_to_mesh(mesh_file: pathlib.Path, points: np.ndarray) -> bool:
-    print("Creating point cloud using open3d")
+def convert_nc_nrrd(
+    nc_file: pathlib.Path,
+    nrrd_file: pathlib.Path,
+    variable: str = "QC",
+    quantization_bits: int = 8,
+) -> bool:
+    """
+    Main function for converting a netCDF dataset into a Near-Raw Raster Data (NRRD)
+    format file. The bounding hull of the point cloud is chosen based on the min and
+    max z-coordinates where non-zero data appears in the source. Data values are
+    scaled and quantized to a 16-bit range. The cloud water mixing ratio variable,
+    "QC" is the default exported variable.
+
+    :params nc_file: netCDF4 file to convert to a 3D object
+    :params nrrd_file: output filepath with .nrrd extension
+    :params variable: the variable to export to a 3D point cloud
+    :params quantization_bits: passed to pre-processing function to quantize float data
+    :returns: True if successful
+    :raises: KeyError if the variable keyword does not exist in the netCDF database
+    """
+    rootgrp = netCDF4.Dataset(nc_file, "r")
+    qcvar = rootgrp.variables[variable]
+    nonzero_points = get_nonzero_points(qcvar)
+    points = map_points_nrrd(nonzero_points, qcvar, quantization_bits)
+    min_y = int(np.min(nonzero_points[:, 2]))
+    create_nrrd_model(nrrd_file, points, min_y)
+    return True
+
+
+def pointcloud_to_mesh(mesh_file: pathlib.Path, points: npt.NDArray[np.int_]) -> bool:
+    print("Creating mesh from point cloud using open3d")
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     pcd.estimate_normals(

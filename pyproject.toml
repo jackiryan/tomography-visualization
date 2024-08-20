@@ -20,12 +20,13 @@ dependencies = [
   "netCDF4 >= 1.7.1.post1",
   "numpy ~= 1.26.4",
   "open3d ~= 0.18.0",
+  "pynrrd",
 ]
-description = "Utility for converting (cloud tomography) netCDF files to gltf 3D models."
+description = "Utility for converting (cloud tomography) netCDF files to gltf or nrrd 3D models."
 name = "nc2gltf"
 readme = "README.md"
 requires-python = ">=3.9,<3.12"
-version = "0.1.0"
+version = "0.2.0"
 
 [project.optional-dependencies]
 dev = [
@@ -43,6 +44,7 @@ name = "nc2gltf"
 
 [project.scripts]
 nc2gltf = "nc2gltf.cli:main"
+nc2nrrd = "nc2gltf.cli:main_nrrd"
 
 [tool.pyright]
 include = ["src"]

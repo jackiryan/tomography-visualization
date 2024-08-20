@@ -228,7 +228,6 @@ Sky.SkyShader = {
 			vec3 retColor = pow( texColor, vec3( 1.0 / ( 1.2 + ( 1.2 * vSunfade ) ) ) );
 
             vec3 starColor = texture(uNightTexture, uv).rgb;
-            float thetaNorm = (theta + pi / 2.0) / pi;
 
             vec3 finalColor = mix(starColor, retColor, smoothstep(uAtmStart, uAtmStop, -direction.y));
 

@@ -105,7 +105,7 @@ function createMaterial() {
         void main() {
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             // increasing the numerator increases the size of the points
-            gl_PointSize = 1000.0 / -mvPosition.z;
+            gl_PointSize = 500.0 / -mvPosition.z;
             gl_Position = projectionMatrix * mvPosition;
 
             #include <clipping_planes_vertex>
