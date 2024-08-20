@@ -41,9 +41,12 @@ npm run dev
 
 ## Other notes
 
-The equirectangular map texture is an AVIF-encoded image originally derived from a .exr HDRI tonemapping file.
+The equirectangular map textures are AVIF-encoded image originally derived from a .exr HDRI tonemapping files.
 
-File source: [https://polyhaven.com/a/qwantani_puresky](https://polyhaven.com/a/qwantani_puresky)
+Cloud file source: [https://polyhaven.com/a/qwantani_puresky](https://polyhaven.com/a/qwantani_puresky)
+Star map file source: [https://svs.gsfc.nasa.gov/4851](https://svs.gsfc.nasa.gov/4851)
 
 AVIF encoding settings (YUV 444 is implied): `avifenc --min 0 --max 63 -a end-usage=q -a cq-level=28 -a tune=ssim --speed 3 static/qwantani_puresky_4k.png static/qwantani_puresky_4k.avif`
+
+AVIF encoding settings for starmap: `avifenc --min 0 --max 63 -a end-usage=q -a cq-level=32 -a tune=ssim --speed 3 static/starmap_2020_4k.png static/starmap_2020_4k.avif`
 

@@ -20,7 +20,7 @@ async function init() {
     container = document.createElement('div');
     document.body.appendChild(container);
 
-    camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 5000);
+    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
     camera.position.set(0, 100, -250);
 
     scene = new THREE.Scene();
@@ -31,7 +31,7 @@ async function init() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setAnimationLoop(animate);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.5;
+    renderer.toneMappingExposure = 1.0;
     renderer.localClippingEnabled = true;
     container.appendChild(renderer.domElement);
 
@@ -105,7 +105,7 @@ function createMaterial() {
         void main() {
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             // increasing the numerator increases the size of the points
-            gl_PointSize = 500.0 / -mvPosition.z;
+            gl_PointSize = 1000.0 / -mvPosition.z;
             gl_Position = projectionMatrix * mvPosition;
 
             #include <clipping_planes_vertex>
@@ -185,14 +185,14 @@ function initGUI() {
         },
         folderSky = gui.addFolder('Sky Parameters'),
         propsSky = {
-            turbidity: 10,
-            rayleigh: 3,
+            turbidity: 0,
+            rayleigh: 0.2,
             mieCoefficient: 0.005,
-            mieDirectionalG: 0.7,
-            elevation: 2,
+            mieDirectionalG: 0.066,
+            elevation: 33,
             azimuth: 180,
             exposure: renderer.toneMappingExposure,
-            atmStart: -1,
+            atmStart: -0.2,
             atmStop: 1
         };
 
