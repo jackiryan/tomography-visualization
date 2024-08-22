@@ -20,8 +20,11 @@ async function init() {
     container = document.createElement('div');
     document.body.appendChild(container);
 
-    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
-    camera.position.set(0, 100, -250);
+    const aspect = window.innerWidth / window.innerHeight;
+    //const h = 100;
+    //camera = new THREE.OrthographicCamera(- h * aspect / 2, h * aspect / 2, h / 2, - h / 2, 0.1, 2000);
+    camera = new THREE.PerspectiveCamera(90, aspect, 0.1, 5000);
+    camera.position.set(0, 100, 250);
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000011);
@@ -79,7 +82,7 @@ async function init() {
         scene.add(image_plane);
     });
 
-    const sphere_size = 10000;
+    const sphere_size = 1000;
     const sphere_geo = new THREE.PlaneGeometry(sphere_size, sphere_size);
     const sphere_mat = new THREE.MeshBasicMaterial({
         color: 0x0a539e
@@ -87,7 +90,7 @@ async function init() {
     sphere = new THREE.Mesh(sphere_geo, sphere_mat);
     scene.add(sphere);
     sphere.rotation.x = -Math.PI / 2.0;
-    sphere.position.set(0, -1, 0);
+    sphere.position.set(0, -2, 0);
 
 
     stats = new Stats();
@@ -105,7 +108,7 @@ function createMaterial() {
         void main() {
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             // increasing the numerator increases the size of the points
-            gl_PointSize = 500.0 / -mvPosition.z;
+            gl_PointSize = 1000.0 / -mvPosition.z;
             gl_Position = projectionMatrix * mvPosition;
 
             #include <clipping_planes_vertex>
@@ -153,13 +156,13 @@ function initGUI() {
                 renderer.localClippingEnabled = v;
             },
             get 'Axis'() {
-                if (clip_plane.normal == new THREE.Vector3(-1, 0, 0)) {
+                if (clip_plane.normal.x === -1) {
                     return 'X';
                 }
-                else if (clip_plane.normal == new THREE.Vector3(0, -1, 0)) {
+                else if (clip_plane.normal.y === -1) {
                     return 'Y';
                 }
-                else {
+                else if (clip_plane.normal.z === -1) {
                     return 'Z';
                 }
             },

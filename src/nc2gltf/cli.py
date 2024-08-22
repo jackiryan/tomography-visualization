@@ -40,6 +40,7 @@ def process_file(
         parser.error(
             f"outfile must be either a {'/'.join(extensions)} filepath or a directory"
         )
+
     try:
         respath = args.resource.expanduser().resolve()
     except AttributeError:
@@ -50,9 +51,29 @@ def process_file(
 
     use_var = args.variable or "QC"
 
+    # Setting this value, which must be an int, to an arbitrary value tells the
+    # quantization function in convert.py to interpret the data as a float
+    bits = 32
+    type_str = f"float{bits}"
+    if args.bits is not None:
+        if args.bits == 8 or args.bits == 16:
+            bits = args.bits
+            type_str = f"uint{bits}"
+        else:
+            parser.error("only 8 or 16 bits are allowed for quantizing data")
+
+    print(f"input filepath   : {inpath}")
+    print(f"output filepath  : {outpath}")
+    print(f"exported variable: {use_var}")
+
     if is_nrrd:
-        convert.convert_nc_nrrd(inpath, outpath, use_var)
+        print(f"quantization     : {type_str}")
+        print("\nExporting data to NRRD...")
+        convert.convert_nc_nrrd(inpath, outpath, use_var, bits)
     else:
+        if outpath.suffix == ".gltf":
+            print(f"vertices filepath: {respath}")
+        print(f"\nExporting data to {outpath.suffix.upper().lstrip('.')}...")
         convert.convert_nc_gltf(inpath, outpath, respath, use_var)
 
 
@@ -91,7 +112,17 @@ def get_parser(is_nrrd: bool = False) -> argparse.ArgumentParser:
             " default is QC"
         ),
     )
-    if not is_nrrd:
+    if is_nrrd:
+        parser.add_argument(
+            "-b",
+            "--bits",
+            type=int,
+            help=(
+                "Bits of precision to quantize variable data. Accepted values "
+                "are 8 or 16 [bits]. If not provided, exports NRRD as float."
+            ),
+        )
+    else:
         parser.add_argument(
             "-r",
             "--resource",

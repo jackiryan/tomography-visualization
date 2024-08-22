@@ -18,8 +18,7 @@ classifiers = [
 dependencies = [
   "gltflib >= 1.0.13",
   "netCDF4 >= 1.7.1.post1",
-  "numpy ~= 1.26.4",
-  "open3d ~= 0.18.0",
+  "numpy",
   "pynrrd",
 ]
 description = "Utility for converting (cloud tomography) netCDF files to gltf or nrrd 3D models."
