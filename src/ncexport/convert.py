@@ -90,13 +90,18 @@ def rotate_points(points: npt.NDArray[np.int_]) -> npt.NDArray[np.int_]:
     return np.column_stack((points[:, 0], points[:, 2], -points[:, 1]))
 
 
-def quantize(u: float, minu: float, maxu: float, levels: int) -> int:
+def quantize(
+    u: np.float_, minu: np.float_, maxu: np.float_, levels: int
+) -> np.uint8 | np.uint16:
     """quantize a floating point value between a min and max over N levels"""
     rangeu = maxu - minu
-    return int((u - minu) / rangeu * levels)
+    dt = np.uint8 if (levels == 255) else np.uint16
+    return dt((u - minu) / rangeu * levels)
 
 
-def quantize_float(u: float, minu: float, maxu: float, levels: int) -> np.float32:
+def quantize_float(
+    u: np.float_, minu: np.float_, maxu: np.float_, levels: int
+) -> np.float32:
     """idempotent function with the same signature as quantize, used when exporting
     netCDF data as floating point."""
     return np.float32(u)
@@ -127,9 +132,9 @@ def map_points_nrrd(
     # Currently discarding this value due to an as yet unsolved issue with the shader
     y_shape = max_y - min_y
 
-    min_val = np.min(vardata[:])
-    max_val = np.max(vardata[:])
-    levels = (2 ** (quantization_bits)) - 1
+    min_val: np.float_ = np.min(vardata[:])
+    max_val: np.float_ = np.max(vardata[:])
+    levels: int = (2 ** (quantization_bits)) - 1
     if quantization_bits == 8:
         dt = np.uint8
         quant_fn = quantize

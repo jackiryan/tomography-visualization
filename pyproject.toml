@@ -19,6 +19,7 @@ dependencies = [
   "gltflib >= 1.0.13",
   "netCDF4 >= 1.7.1.post1",
   "numpy",
+  "pillow",
   "pynrrd",
 ]
 description = "Utility for exporting (cloud tomography) netCDF files to other formats."
@@ -44,6 +45,7 @@ name = "ncexport"
 [project.scripts]
 nc2gltf = "ncexport.cli:main"
 nc2nrrd = "ncexport.cli:main_nrrd"
+ncradiance = "ncexport.cli:main_rad"
 
 [tool.pyright]
 include = ["src"]

@@ -3,29 +3,30 @@
 import argparse
 import pathlib
 
-from . import convert
+from . import convert, radiance
 
 
-def process_file(
-    args: argparse.Namespace, parser: argparse.ArgumentParser, is_nrrd: bool = False
-) -> None:
-    """Perform basic checks on filepath arguments before calling convert_nc_gltf
-    or convert_nc_nrrd function."""
+def sanitize_inpath(
+    inpath: pathlib.Path, parser: argparse.ArgumentParser
+) -> pathlib.Path:
     try:
-        inpath = args.file.expanduser().resolve()
+        inpath = inpath.expanduser().resolve()
     except RuntimeError:
         parser.error("could not resolve input filepath")
     # Check that the input file is a netCDF file. Only the .nc extension is allowed
     if not inpath.is_file() or inpath.suffix.lower() != ".nc":
         parser.error("provided input is not a netCDF format file")
+    return inpath
 
-    if is_nrrd:
-        extensions = [".nrrd"]
-    else:
-        extensions = [".glb", ".gltf"]
 
+def sanitize_outpath(
+    outpath: pathlib.Path,
+    inpath: pathlib.Path,
+    parser: argparse.ArgumentParser,
+    extensions: list[str],
+) -> pathlib.Path:
     try:
-        outpath = args.outfile.expanduser().resolve()
+        outpath = outpath.expanduser().resolve()
     except AttributeError:
         # if args.outfile is None
         in_parentpath = pathlib.PurePath(inpath).parent
@@ -40,7 +41,25 @@ def process_file(
         parser.error(
             f"outfile must be either a {'/'.join(extensions)} filepath or a directory"
         )
+    return outpath
 
+
+def process_file(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, is_nrrd: bool = False
+) -> None:
+    """Perform basic checks on filepath arguments before calling convert_nc_gltf
+    or convert_nc_nrrd function."""
+    inpath = sanitize_inpath(args.file, parser)
+
+    if is_nrrd:
+        extensions = [".nrrd"]
+    else:
+        extensions = [".glb", ".gltf"]
+
+    outpath = sanitize_outpath(args.outfile, inpath, parser, extensions)
+
+    # This is more or less the same as sanitize outpath, but it's not worth my time
+    # to fully refactor
     try:
         respath = args.resource.expanduser().resolve()
     except AttributeError:
@@ -75,6 +94,20 @@ def process_file(
             print(f"vertices filepath: {respath}")
         print(f"\nExporting data to {outpath.suffix.upper().lstrip('.')}...")
         convert.convert_nc_gltf(inpath, outpath, respath, use_var)
+
+
+def process_file_rad(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    inpath = sanitize_inpath(args.file, parser)
+    extensions = [".png", ".jpg"]
+    outpath = sanitize_outpath(args.outfile, inpath, parser, extensions)
+
+    use_var = args.variable or "rad"
+
+    print(f"input filepath   : {inpath}")
+    print(f"output filepath  : {outpath}")
+    print(f"exported variable: {use_var}")
+
+    radiance.export_radiance_image(inpath, outpath, use_var)
 
 
 def get_parser(is_nrrd: bool = False) -> argparse.ArgumentParser:
@@ -133,19 +166,36 @@ def get_parser(is_nrrd: bool = False) -> argparse.ArgumentParser:
                 " default is the same name as the model but with .bin extension"
             ),
         )
-    # parser.add_argument(
-    #     "-v",
-    #     "--verbose",
-    #     action="count",
-    #     default=0,
-    #     help="increase verbosity level"
-    # )
-    # parser.add_argument(
-    #     "--logfile",
-    #     type=pathlib.Path,
-    #     help="path to logfile to send output to",
-    #     metavar="FILE"
-    # )
+    return parser
+
+
+def get_parser_rad() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "file",
+        type=pathlib.Path,
+        metavar="FILE",
+        help="input file in netCDF (.nc) format, the rad variable is required",
+    )
+    parser.add_argument(
+        "-o",
+        "--outfile",
+        type=pathlib.Path,
+        metavar="FILE",
+        help=(
+            "path to an output file to use instead of the default, which would "
+            "be the same name as the input file, but with the .png extension"
+        ),
+    )
+    parser.add_argument(
+        "-v",
+        "--variable",
+        type=str,
+        help=(
+            "optionally specify the variable name to convert to an image."
+            " default is rad"
+        ),
+    )
     return parser
 
 
@@ -153,10 +203,6 @@ def main() -> None:
     """Process config and CLI arguments then initiate processing."""
     parser = get_parser()
     args = parser.parse_args()
-
-    # if args.logfile is not None and args.logfile.exists():
-    #     parser.error("logfile already exists")
-    # set_console_logger(args.verbose, args.logfile)
 
     process_file(args, parser)
 
@@ -167,3 +213,10 @@ def main_nrrd() -> None:
     args = parser.parse_args()
 
     process_file(args, parser, is_nrrd=True)
+
+
+def main_rad() -> None:
+    parser = get_parser_rad()
+    args = parser.parse_args()
+
+    process_file_rad(args, parser)

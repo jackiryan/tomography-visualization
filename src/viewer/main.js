@@ -89,7 +89,7 @@ async function init() {
 
     const textureLoader = new THREE.TextureLoader();
     const plane_geo = new THREE.PlaneGeometry(1, 1);
-    textureLoader.load('./cloudrender_lowres.png', function (texture) {
+    textureLoader.load('./MISR_40m_radiance_nadir_2048x2048.png', function (texture) {
         texture.colorSpace = THREE.SRGBColorSpace;
         const plane_mat = new THREE.MeshBasicMaterial({
             map: texture,
@@ -97,7 +97,7 @@ async function init() {
         });
         image_plane = new THREE.Mesh(plane_geo, plane_mat);
         image_plane.rotation.x = -Math.PI / 2.0;
-        //scene.add(image_plane);
+        scene.add(image_plane);
     });
 
     const ground_size = 1000; // for spherical ground
