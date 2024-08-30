@@ -1,4 +1,4 @@
-"""CLI frontend for converting netCDF to gltf."""
+"""CLI frontend for converting netCDF to gltf or nrrd."""
 
 import argparse
 import pathlib

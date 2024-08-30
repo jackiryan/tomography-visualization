@@ -1,32 +1,31 @@
-import restart from 'vite-plugin-restart'
-import { optimizeDeps } from 'vite'
+import restart from 'vite-plugin-restart';
+import glsl from 'vite-plugin-glsl';
+import { defineConfig } from 'vite';
 
-export default {
+export default defineConfig({
     root: 'src/viewer/',
     publicDir: '../../static/',
     base: './',
-    server:
-    {
+    server: {
         host: true, // Open to local network and display URL
         open: !('SANDBOX_URL' in process.env || 'CODESANDBOX_HOST' in process.env) // Open if it's not a CodeSandbox
     },
-    build:
-    {
-        outDir: '../dist', // Output in the dist/ folder
+    build: {
+        outDir: '../../dist', // Output in the dist/ folder
         emptyOutDir: true, // Empty the folder first
         sourcemap: true, // Add sourcemap
-        target: "es2022"
+        target: "es2023"
     },
     esbuild: {
-        target: "es2022"
+        target: "es2023"
     },
     optimizeDeps: {
         esbuildOptions: {
-            target: "es2022",
+            target: "es2023",
         }
     },
-    plugins:
-        [
-            restart({ restart: ['../static/**',] }), // Restart server on static file change
-        ]
-}
+    plugins: [
+        restart({ restart: ['../static/**',] }), // Restart server on static file change
+        glsl() // Handle shader files
+    ]
+});

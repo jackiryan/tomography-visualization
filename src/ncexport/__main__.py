@@ -1,4 +1,5 @@
 """Module allowing direct running."""
-from nc2gltf import cli
+
+from ncexport import cli
 
 cli.main()

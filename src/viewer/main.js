@@ -2,15 +2,17 @@
 import * as THREE from 'three';
 
 import Stats from 'three/addons/libs/stats.module.js';
-
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { NRRDLoader } from 'three/examples/jsm/loaders/NRRDLoader.js';
 import { Sky } from './sky.js';
+import cloudVertexShader from './shaders/clouds/cloudVertex.glsl';
+import cloudFragmentShader from './shaders/clouds/cloudFragment.glsl';
+
 
 let container, stats;
 let camera, controls, scene, renderer;
-let model, image_plane, clip_plane, sphere;
+let model, image_plane, clip_plane, ground;
 let sky, sun;
 
 await init();
@@ -21,10 +23,8 @@ async function init() {
     document.body.appendChild(container);
 
     const aspect = window.innerWidth / window.innerHeight;
-    //const h = 100;
-    //camera = new THREE.OrthographicCamera(- h * aspect / 2, h * aspect / 2, h / 2, - h / 2, 0.1, 2000);
     camera = new THREE.PerspectiveCamera(90, aspect, 0.1, 5000);
-    camera.position.set(0, 100, 250);
+    camera.position.set(0, 1, 1);
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000011);
@@ -32,7 +32,6 @@ async function init() {
     renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setAnimationLoop(animate);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
     renderer.localClippingEnabled = true;
@@ -41,36 +40,55 @@ async function init() {
     const ambientLight = new THREE.AmbientLight(0xffffff, 1);
     scene.add(ambientLight);
 
-    new GLTFLoader().load('./ARM_28800s_QC.gltf', function (gltf) {
-        clip_plane = new THREE.Plane(new THREE.Vector3(0, 0, -1), -100);
-        model = gltf.scene;
-        model.traverse((node) => {
-            if (node instanceof THREE.Points) {
-                node.material = createMaterial();
-            }
+    stats = new Stats();
+    container.appendChild(stats.dom);
+
+    controls = new OrbitControls(camera, renderer.domElement);
+
+    new NRRDLoader().load('./ARM_28800s_QC.nrrd', async function (volume) {
+        clip_plane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
+        const texture = new THREE.Data3DTexture(volume.data, 400, 400, 400);
+        texture.format = THREE.RedFormat;
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const material = new THREE.RawShaderMaterial({
+            glslVersion: THREE.GLSL3,
+            uniforms: {
+                base: { value: new THREE.Color(0x798aa0) },
+                map: { value: texture },
+                cameraPos: { value: new THREE.Vector3() },
+                threshold: { value: 0.01 },
+                opacity: { value: 1.0 },
+                range: { value: 0.0 },
+                steps: { value: 200 },
+                frame: { value: 0 }
+            },
+            vertexShader: cloudVertexShader,
+            fragmentShader: cloudFragmentShader,
+            side: THREE.BackSide,
+            transparent: true,
+            clipping: true,
+            clippingPlanes: [clip_plane]
         });
-        positionModel(model);
+
+        model = new THREE.Mesh(geometry, material);
+        model.position.set(0, 0.5, 0);
         scene.add(model);
 
-        initSky();
+        await initSky().then(() => {
+            initGUI();
+            renderer.setAnimationLoop(animate);
+        });
 
-        initGUI();
     }, undefined, function (error) {
-        console.error(`Failed to load point cloud model: ${error}`);
+        console.error(`Failed to load point cloud data: ${error}`);
     });
 
     const textureLoader = new THREE.TextureLoader();
-
-    // scene background, this is derived from an HDRI used for tonemapping but works okay as a background too
-    /*
-    textureLoader.load('./qwantani_puresky_4k.avif', function (texture) {
-        texture.mapping = THREE.EquirectangularReflectionMapping;
-        texture.colorSpace = THREE.SRGBColorSpace;
-        scene.background = texture;
-    });
-    */
-
-    const plane_geo = new THREE.PlaneGeometry(400, 400);
+    const plane_geo = new THREE.PlaneGeometry(1, 1);
     textureLoader.load('./cloudrender_lowres.png', function (texture) {
         texture.colorSpace = THREE.SRGBColorSpace;
         const plane_mat = new THREE.MeshBasicMaterial({
@@ -79,125 +97,99 @@ async function init() {
         });
         image_plane = new THREE.Mesh(plane_geo, plane_mat);
         image_plane.rotation.x = -Math.PI / 2.0;
-        scene.add(image_plane);
+        //scene.add(image_plane);
     });
 
-    const sphere_size = 1000;
-    const sphere_geo = new THREE.PlaneGeometry(sphere_size, sphere_size);
-    const sphere_mat = new THREE.MeshBasicMaterial({
+    const ground_size = 1000; // for spherical ground
+    const ground_geo = new THREE.PlaneGeometry(ground_size, ground_size);
+    const ground_mat = new THREE.MeshBasicMaterial({
         color: 0x0a539e
     });
-    sphere = new THREE.Mesh(sphere_geo, sphere_mat);
-    scene.add(sphere);
-    sphere.rotation.x = -Math.PI / 2.0;
-    sphere.position.set(0, -2, 0);
-
-
-    stats = new Stats();
-    container.appendChild(stats.dom);
-
-    controls = new OrbitControls(camera, renderer.domElement);
+    ground = new THREE.Mesh(ground_geo, ground_mat);
+    //scene.add(ground);
+    ground.rotation.x = -Math.PI / 2.0;
+    ground.position.set(0, -2, 0);
 
     window.addEventListener('resize', onWindowResize, false);
 }
 
-function createMaterial() {
-    const vertexShader = `
-        #include <clipping_planes_pars_vertex>
-
-        void main() {
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            // increasing the numerator increases the size of the points
-            gl_PointSize = 1000.0 / -mvPosition.z;
-            gl_Position = projectionMatrix * mvPosition;
-
-            #include <clipping_planes_vertex>
-        }
-    `;
-
-    const fragmentShader = `
-        #include <clipping_planes_pars_fragment>
-
-        void main() {
-            vec4 diffuseColor = vec4(1.0, 1.0, 1.0, 1.0);
-            #include <clipping_planes_fragment>
-
-            gl_FragColor = diffuseColor;
-        }
-    `;
-
-    const material = new THREE.ShaderMaterial({
-        vertexShader: vertexShader,
-        fragmentShader: fragmentShader,
-        clipping: true,
-        clippingPlanes: [clip_plane]
+async function initSky() {
+    return new Promise((resolve, reject) => {
+        new THREE.TextureLoader().load('./starmap_2020_4k.avif', function (texture) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+            sky = new Sky(texture);
+            sky.scale.setScalar(450000);
+            scene.add(sky);
+            sun = new THREE.Vector3();
+            resolve();
+        }, undefined, function (error) {
+            console.error(`Failed to load sky: ${error}`);
+            reject(error);
+        });
     });
-
-    return material;
-}
-
-function initSky() {
-    const starTex = new THREE.TextureLoader().load('./starmap_2020_4k.avif');
-    starTex.colorSpace = THREE.SRGBColorSpace;
-    starTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-    sky = new Sky(starTex);
-    sky.scale.setScalar(450000);
-    scene.add(sky);
-    sun = new THREE.Vector3();
 }
 
 function initGUI() {
-    const gui = new GUI(),
-        props = {
-            get 'Enabled'() {
-                return renderer.localClippingEnabled;
-            },
-            set 'Enabled'(v) {
-                renderer.localClippingEnabled = v;
-            },
-            get 'Axis'() {
-                if (clip_plane.normal.x === -1) {
-                    return 'X';
-                }
-                else if (clip_plane.normal.y === -1) {
-                    return 'Y';
-                }
-                else if (clip_plane.normal.z === -1) {
-                    return 'Z';
-                }
-            },
-            set 'Axis'(v) {
-                switch (v) {
-                    case 'X':
-                        clip_plane.normal.set(-1, 0, 0);
-                        break;
-                    case 'Y':
-                        clip_plane.normal.set(0, -1, 0);
-                        break;
-                    case 'Z':
-                        clip_plane.normal.set(0, 0, -1);
-                        break;
-                }
-            },
-            get 'Plane'() {
-                return clip_plane.constant;
-            },
-            set 'Plane'(v) {
-                clip_plane.constant = v;
-            },
+    const gui = new GUI();
+    const folderClip = gui.addFolder('Clip Plane');
+    const propsClip = {
+        get 'enabled'() {
+            return renderer.localClippingEnabled;
         },
-        folderSky = gui.addFolder('Sky Parameters'),
-        propsSky = {
-            turbidity: 0,
-            rayleigh: 0.2,
-            mieCoefficient: 0.005,
-            mieDirectionalG: 0.066,
-            elevation: 33,
-            azimuth: 180,
-            exposure: renderer.toneMappingExposure,
-            atmStart: -0.2,
-            atmStop: 1
-        };
+        set 'enabled'(v) {
+            renderer.localClippingEnabled = v;
+        },
+        get 'axis'() {
+            if (clip_plane.normal.x === -1) {
+                return 'X';
+            }
+            else if (clip_plane.normal.y === -1) {
+                return 'Y';
+            }
+            else if (clip_plane.normal.z === -1) {
+                return 'Z';
+            }
+        },
+        set 'axis'(v) {
+            switch (v) {
+                case 'X':
+                    clip_plane.normal.set(-1, 0, 0);
+                    break;
+                case 'Y':
+                    clip_plane.normal.set(0, -1, 0);
+                    break;
+                case 'Z':
+                    clip_plane.normal.set(0, 0, -1);
+                    break;
+            }
+        },
+        get 'planePosition'() {
+            return clip_plane.constant;
+        },
+        set 'planePosition'(v) {
+            clip_plane.constant = v;
+        },
+    };
+    const folderSky = gui.addFolder('Sky Parameters');
+    const propsSky = {
+        turbidity: 0,
+        rayleigh: 0.2,
+        mieCoefficient: 0.005,
+        mieDirectionalG: 0.066,
+        elevation: 33,
+        azimuth: 180,
+        exposure: renderer.toneMappingExposure,
+        atmStart: -0.2,
+        atmStop: 1
+    };
+    const folderCloud = gui.addFolder('Cloud Parameters');
+    const propsCloud = {
+        qcThreshold: 1.0,
+        opacity: 100.0,
+        range: 0.0,
+        raymarchSteps: 200
+    }
 
     function skyChanged() {
         const uniforms = sky.material.uniforms;
@@ -217,12 +209,24 @@ function initGUI() {
 
         renderer.toneMappingExposure = propsSky.exposure;
         renderer.render(scene, camera);
-
     }
 
-    gui.add(props, 'Enabled');
-    gui.add(props, 'Axis', ['X', 'Y', 'Z']);
-    gui.add(props, 'Plane', -250, 250);
+    function cloudsChanged() {
+        const uniforms = model.material.uniforms;
+        uniforms['threshold'].value = propsCloud.qcThreshold / 100.0;
+        uniforms['opacity'].value = propsCloud.opacity / 100.0;
+        uniforms['range'].value = propsCloud.range;
+        uniforms['steps'].value = propsCloud.raymarchSteps;
+    }
+
+    folderClip.add(propsClip, 'enabled');
+    folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
+    folderClip.add(propsClip, 'planePosition', -1.0, 1.0, 0.01);
+
+    folderCloud.add(propsCloud, 'qcThreshold', 0, 100, 0.1).onChange(cloudsChanged);
+    folderCloud.add(propsCloud, 'opacity', 0, 100, 0.1).onChange(cloudsChanged);
+    folderCloud.add(propsCloud, 'range', 0, 1, 0.01).onChange(cloudsChanged);
+    folderCloud.add(propsCloud, 'raymarchSteps', 0, 500, 1).onChange(cloudsChanged);
 
     folderSky.add(propsSky, 'turbidity', 0.0, 20.0, 0.1).onChange(skyChanged);
     folderSky.add(propsSky, 'rayleigh', 0.0, 4, 0.001).onChange(skyChanged);
@@ -243,16 +247,8 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-function positionModel(model) {
-    // Rotate -90 degrees about the x, i.e., convert from z up to y up convention
-    //model.rotation.x = -Math.PI / 2.0;
-    // Push the model back 200 units away from the camera (the camera is at z=-300)
-    model.position.z += 200;
-    // Push the model 200 units right relative to the camera
-    model.position.x -= 200;
-}
-
 function animate() {
+    model.material.uniforms.cameraPos.value.copy(camera.position);
     controls.update();
 
     stats.begin();

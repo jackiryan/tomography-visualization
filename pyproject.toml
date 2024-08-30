@@ -21,8 +21,8 @@ dependencies = [
   "numpy",
   "pynrrd",
 ]
-description = "Utility for converting (cloud tomography) netCDF files to gltf or nrrd 3D models."
-name = "nc2gltf"
+description = "Utility for exporting (cloud tomography) netCDF files to other formats."
+name = "ncexport"
 readme = "README.md"
 requires-python = ">=3.9,<3.12"
 version = "0.2.0"
@@ -36,14 +36,14 @@ dev = [
 ]
 
 [tool.flit.module]
-name = "nc2gltf"
+name = "ncexport"
 
 # [options]
 # py_modules = ["nc2gltf"]
 
 [project.scripts]
-nc2gltf = "nc2gltf.cli:main"
-nc2nrrd = "nc2gltf.cli:main_nrrd"
+nc2gltf = "ncexport.cli:main"
+nc2nrrd = "ncexport.cli:main_nrrd"
 
 [tool.pyright]
 include = ["src"]
