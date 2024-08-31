@@ -203,6 +203,7 @@ def main() -> None:
     """Process config and CLI arguments then initiate processing."""
     parser = get_parser()
     args = parser.parse_args()
+    args.bits = None
 
     process_file(args, parser)
 

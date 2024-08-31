@@ -16,3 +16,4 @@ class Variable:
         self, key: Union[int, slice, tuple[Union[int, slice], ...]]
     ) -> Any: ...
     shape: tuple[int, ...]
+    dimensions: tuple[str, ...]

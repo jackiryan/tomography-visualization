@@ -9,6 +9,42 @@ import pathlib
 # import open3d as o3d
 
 
+def parse_netcdf(nc_file: pathlib.Path, variable: str) -> npt.NDArray[np.float_]:
+    """
+    Read in a netCDF file, handle the 4th dimension, if present, and then transpose
+    the data into a standard (x, y, z) dimension ordering.
+
+    :param nc_file: netCDF4 file to convert to a 3D object/texture
+    :params variable: the variable to export to a 3D object/texture
+    :returns: numpy ndarray containing data from the variable in xyz order
+    :raises: KeyError if the variable keyword does not exist in the netCDF database
+    :raises: ValueError if the dimensions in the variable are not named as expected
+    :raises: TypeError if the variable has more than 4 dimensions
+    """
+    rootgrp = netCDF4.Dataset(nc_file, "r")
+    qcvar = rootgrp.variables[variable]
+    qcarr = np.array(qcvar)
+    dimensions = qcvar.dimensions
+    nx = dimensions.index("nx")
+    ny = dimensions.index("ny")
+    nz = dimensions.index("nz")
+
+    if len(dimensions) == 4:
+        # Assume the extra dimension is time (nt) and use the 0th index
+        nt = dimensions.index("nt")
+        qcarr = np.take(qcarr, indices=0, axis=nt)
+        if nt < nx:
+            nx -= 1
+        if nt < ny:
+            ny -= 1
+        if nt < nz:
+            nz -= 1
+    elif len(dimensions) > 4:
+        raise TypeError("unable to handle netCDF files with > 4 dimensions")
+
+    return np.transpose(qcarr, (nx, ny, nz))
+
+
 def create_gltf_model(
     modelpath: pathlib.Path,
     pointarray: npt.NDArray[np.int_],
@@ -72,16 +108,16 @@ def create_vertex_buffer(vertices: npt.NDArray[np.int_]) -> bytes:
     return vertices.astype(np.float32).flatten().tobytes()
 
 
-def get_nonzero_points(qcvar: netCDF4.Variable) -> npt.NDArray[np.int_]:
+def get_nonzero_points(qcarr: npt.NDArray[np.float_]) -> npt.NDArray[np.int_]:
     """
     Determines the 3-dimensional index of each non-zero point in the provided netCDF
     variable. Input dimensions should be X-by-Y-by-Z and output dimensions will be an
     N-by-3 where each point is an [x,y,z] coordinate and N is the number of non-zero
     points.
-    :params qcvar: netcdf4 variable to parse
+    :params qcarr: netcdf4 variable data as a numpy array
     :returns: numpy ndarray containing the indices of all non-zero points as [x, y, z]
     """
-    nonzero_indices = np.nonzero(qcvar[:])
+    nonzero_indices = np.nonzero(qcarr[:])
     return np.stack(nonzero_indices, axis=-1)
 
 
@@ -108,7 +144,9 @@ def quantize_float(
 
 
 def map_points_nrrd(
-    nz_points: npt.NDArray[np.int_], vardata: netCDF4.Variable, quantization_bits: int
+    nz_points: npt.NDArray[np.int_],
+    vardata: npt.NDArray[np.float_],
+    quantization_bits: int,
 ) -> npt.NDArray[np.uint8 | np.uint16 | np.float32]:
     """
     Convert values in the input netCDF variable to quantized values. If
@@ -119,7 +157,7 @@ def map_points_nrrd(
     :param nz_points: the indices of non-zero data values. This is intended
     to allow for more efficient data packing by only storing the vertical slices
     containing non-zero data.
-    :param vardata: netCDF variable to read values from
+    :param vardata: netCDF variable data as a numpy array
     :param quantization_bits: export data as 8- or 16-bit values, otherwise as float
     :returns: numpy ndarray with the data as the type specified by quantization_bits
     """
@@ -149,12 +187,12 @@ def map_points_nrrd(
     # volumetric shader. TO DO: Modify the shader to allow more efficient data packing
     points = np.zeros((base_shape[0], base_shape[0], base_shape[1]), dtype=dt)
     for pt in nz_points:
-        in_x = pt[0]
-        in_y = pt[1]
-        in_z = pt[2]
-        x = pt[0]
-        y = pt[2] - min_y - 1
-        z = base_shape[1] - pt[1] - 1
+        in_x: int = pt[0]
+        in_y: int = pt[1]
+        in_z: int = pt[2]
+        x = in_x
+        y = in_z - min_y - 1
+        z = base_shape[1] - in_y - 1
         points[x][y][z] = quant_fn(vardata[in_x][in_y][in_z], min_val, max_val, levels)
     return points
 
@@ -195,12 +233,12 @@ def convert_nc_gltf(
     :params variable: the variable to export to a 3D point cloud
     :returns: True if successful
     :raises: KeyError if the variable keyword does not exist in the netCDF database
+    :raises: ValueError if the dimensions in the variable are not named as expected
+    :raises: TypeError if the variable has more than 4 dimensions
     """
-    rootgrp = netCDF4.Dataset(nc_file, "r")
-    # Raises KeyError if QC is not present in the netCDF
-    qcvar = rootgrp.variables[variable]
+    qcarr = parse_netcdf(nc_file, variable)
 
-    nonzero_points = get_nonzero_points(qcvar)
+    nonzero_points = get_nonzero_points(qcarr)
     print(f"Found {nonzero_points.shape[0]} points")
 
     points = rotate_points(nonzero_points)
@@ -222,21 +260,21 @@ def convert_nc_nrrd(
     scaled and quantized to an 8- or 16-bit range (or float). The cloud water mixing
     ratio variable, "QC" is the default exported variable.
 
-    :params nc_file: netCDF4 file to convert to a 3D object
+    :params nc_file: netCDF4 file to convert to a 3D texture
     :params nrrd_file: output filepath with .nrrd extension
-    :params variable: the variable to export to a 3D point cloud
+    :params variable: the variable to export to a 3D texture
     :params quantization_bits: passed to pre-processing function to quantize float data
     :returns: True if successful
     :raises: KeyError if the variable keyword does not exist in the netCDF database
+    :raises: ValueError if the dimensions in the variable are not named as expected
+    :raises: TypeError if the variable has more than 4 dimensions
     """
-    rootgrp = netCDF4.Dataset(nc_file, "r")
-    qcvar = rootgrp.variables[variable]
+    qcarr = parse_netcdf(nc_file, variable)
 
-    nonzero_points = get_nonzero_points(qcvar)
+    nonzero_points = get_nonzero_points(qcarr)
     print(f"Found {nonzero_points.shape[0]} points")
-
     # quantization_bits = 32 if exporting data as floating point
-    points = map_points_nrrd(nonzero_points, qcvar, quantization_bits)
+    points = map_points_nrrd(nonzero_points, qcarr, quantization_bits)
 
     # When packing the data, it's important to know where the data starts on the
     # y axis so it can be placed in the scene properly
