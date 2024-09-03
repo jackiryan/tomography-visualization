@@ -161,7 +161,7 @@ def map_points_nrrd(
     :param quantization_bits: export data as 8- or 16-bit values, otherwise as float
     :returns: numpy ndarray with the data as the type specified by quantization_bits
     """
-    base_shape = vardata.shape
+    base_shape = (512, 512, 512)  # vardata.shape
 
     # The output coordinate space has y up, so denote the z dimension of the input data
     # as a y dimension for the output point cloud
@@ -187,12 +187,18 @@ def map_points_nrrd(
     # volumetric shader. TO DO: Modify the shader to allow more efficient data packing
     points = np.zeros((base_shape[0], base_shape[0], base_shape[1]), dtype=dt)
     for pt in nz_points:
+        if (
+            pt[0] > base_shape[0] - 1
+            or pt[1] > base_shape[1] - 1
+            or pt[2] > base_shape[2] - 1
+        ):
+            continue
         in_x: int = pt[0]
         in_y: int = pt[1]
         in_z: int = pt[2]
         x = in_x
-        y = in_z - min_y - 1
-        z = base_shape[1] - in_y - 1
+        y = in_y  # in_z - min_y - 1
+        z = in_z  # base_shape[1] - in_y - 1
         points[x][y][z] = quant_fn(vardata[in_x][in_y][in_z], min_val, max_val, levels)
     return points
 

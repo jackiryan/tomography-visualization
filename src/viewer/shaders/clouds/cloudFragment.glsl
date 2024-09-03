@@ -43,7 +43,7 @@ float randomFloat(inout uint seed) {
 
 vec2 hitBox(vec3 orig, vec3 dir) {
     const vec3 box_min = vec3(-0.5, -0.5, -0.5);
-    const vec3 box_max = vec3(0.5, -0.4, 0.5);
+    const vec3 box_max = vec3(0.5, 0.5, 0.5);
     vec3 inv_dir = 1.0 / dir;
     vec3 tmin_tmp = (box_min - orig) * inv_dir;
     vec3 tmax_tmp = (box_max - orig) * inv_dir;
@@ -56,7 +56,7 @@ vec2 hitBox(vec3 orig, vec3 dir) {
 
 vec2 hitBoxClipPlane(vec3 orig, vec3 dir, vec3 plane) {
     const vec3 box_min = vec3(-0.5, -0.5, -0.5);
-    const vec3 box_max = vec3(0.5, -0.4, 0.5);
+    const vec3 box_max = vec3(0.5, 0.5, 0.5);
     vec3 inv_dir = 1.0 / dir;
     vec3 tmin_tmp = (box_min - orig) * inv_dir;
     vec3 tmax_tmp = (box_max - orig) * inv_dir;

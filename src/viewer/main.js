@@ -47,8 +47,9 @@ async function init() {
     document.body.appendChild(container);
 
     const aspect = window.innerWidth / window.innerHeight;
-    camera = new THREE.PerspectiveCamera(90, aspect, 0.1, 5000);
-    camera.position.set(0, 1, 1);
+    camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 5000);
+    camera.position.set(0, 1, 0);
+    camera.rotation.set(-Math.PI / 2.0, 0, 0);
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000011);
@@ -58,10 +59,10 @@ async function init() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
-    renderer.localClippingEnabled = true;
+    renderer.localClippingEnabled = false;
     container.appendChild(renderer.domElement);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 9);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 10);
     scene.add(ambientLight);
 
     stats = new Stats();
@@ -87,12 +88,17 @@ async function init() {
     const plane_geo = new THREE.PlaneGeometry(1, 1);
     textureLoader.load('./MISR_40m_radiance_nadir_2048x2048.png', function (texture) {
         texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.x = 1;
+        texture.repeat.y = 1;
+        texture.needsUpdate = true;
         const plane_mat = new THREE.MeshPhongMaterial({
             map: texture,
             side: THREE.DoubleSide
         });
         image_plane = new THREE.Mesh(plane_geo, plane_mat);
-        image_plane.rotation.set(-Math.PI / 2.0, 0.0, -Math.PI / 2.0);
+        image_plane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
         scene.add(image_plane);
     });
 
@@ -120,8 +126,11 @@ async function loadGLTF(modelName) {
                 }
             });
             model.scale.set(1 / modelDim, 1 / modelDim, 1 / modelDim);
-            model.position.z += 0.5;
             model.position.x -= 0.5;
+            model.position.z -= 0.5;
+            model.scale.z *= -1.0;
+            //model.rotation.x = Math.PI;
+            //model.rotation.z = Math.PI;
             scene.add(model);
             resolve();
         }, undefined, function (error) {
@@ -136,7 +145,7 @@ async function loadNRRD(modelName) {
         new NRRDLoader().load(modelName, async function (volume) {
             clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
 
-            const texture = new THREE.Data3DTexture(volume.data, modelDim, modelDim, modelDim);
+            const texture = new THREE.Data3DTexture(volume.data, volume.xLength, volume.yLength, volume.zLength);
             texture.format = THREE.RedFormat;
             texture.minFilter = THREE.LinearFilter;
             texture.magFilter = THREE.LinearFilter;
@@ -164,7 +173,9 @@ async function loadNRRD(modelName) {
             });
 
             model = new THREE.Mesh(geometry, material);
-            model.position.set(0, 0.5, 0);
+            model.position.set(0.375, 0.13, 0.375);
+            model.rotation.set(-Math.PI / 2.0, 0, 0);
+            model.scale.set(0.25, 0.25, 0.25);
             scene.add(model);
             resolve();
         }, undefined, function (error) {
@@ -349,7 +360,8 @@ function initGUI() {
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
         const propsCloud = {
-            scale: defaultPointSize
+            scale: defaultPointSize,
+            posY: 0.0
         }
 
         function cloudsChanged() {
@@ -357,11 +369,12 @@ function initGUI() {
                 if (node instanceof THREE.Points) {
                     const uniforms = node.material.uniforms;
                     uniforms['uScale'].value = propsCloud.scale;
+                    model.position.y = propsCloud.posY;
                 }
             });
         }
         folderCloud.add(propsCloud, 'scale', 0.1, 10, 0.1).onChange(cloudsChanged);
-
+        folderCloud.add(propsCloud, 'posY', 0.0, 0.5, 0.01).onChange(cloudsChanged);
     } else {
         const propsCloud = {
             qcThreshold: 1.0,
