@@ -87,5 +87,5 @@ void main() {
     color = vec4(finalColor, 1.0);
 
     //#include <tonemapping_fragment>
-    //#include <colorspace_fragment>
+    color = linearToOutputTexel( color );
 }

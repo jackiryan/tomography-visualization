@@ -1,3 +1,4 @@
+import matplotlib as mpl
 import netCDF4
 import numpy as np
 import pathlib
@@ -23,6 +24,9 @@ def export_radiance_image(
 
     vec_quantize = np.vectorize(quantize_uint8)
     imgarr: npt.NDArray[np.uint8] = vec_quantize(radarr)
-    radimg = Image.fromarray(imgarr)
+    colormap = mpl.colormaps["Blues_r"]
+    cm_imgarr = colormap(imgarr / float(levels))
+
+    radimg = Image.fromarray((cm_imgarr[:, :, :3] * levels).astype(np.uint8))
     radimg.save(image_file)
     return True

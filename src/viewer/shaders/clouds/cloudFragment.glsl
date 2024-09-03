@@ -92,19 +92,23 @@ void main() {
     vec2 bounds = hitBox(vOrigin, rayDir);
 
     #if NUM_CLIPPING_PLANES > 0
+        #pragma unroll_loop_start
         for (int i = 0; i < UNION_CLIPPING_PLANES; ++i) {
             vec4 plane = clippingPlanes[i];
             if (dot(vViewPosition, plane.xyz) > plane.w) {
                 discard;
             }
         }
+        #pragma unroll_loop_end
         
         #if UNION_CLIPPING_PLANES < NUM_CLIPPING_PLANES
             bool clipped = true;
+            #pragma unroll_loop_start
             for (int i = UNION_CLIPPING_PLANES; i < NUM_CLIPPING_PLANES; ++ i) {
                 vec4 plane = clippingPlanes[ i ];
                 clipped = (dot(vViewPosition, plane.xyz) > plane.w) && clipped;
             }
+            #pragma unroll_loop_end
 
             if (clipped) {
                 discard;

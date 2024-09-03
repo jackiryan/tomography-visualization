@@ -28,11 +28,16 @@ let baseName = './ARM_28800s_QC';
 if (useBigModel) {
     baseName = './RICO_40m_80kmx80km_QC';
 }
-let modelFile = `'${baseName}.nrrd`;
+let modelFile = `${baseName}.nrrd`;
 
 if (useGltf) {
     modelFile = `${baseName}.gltf`;
 }
+
+console.log(`loading model: ${modelFile}`);
+console.log(`model dimension: ${modelDim}`);
+
+const defaultPointSize = 2.0;
 
 await init();
 
@@ -56,7 +61,7 @@ async function init() {
     renderer.localClippingEnabled = true;
     container.appendChild(renderer.domElement);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 9);
     scene.add(ambientLight);
 
     stats = new Stats();
@@ -82,7 +87,7 @@ async function init() {
     const plane_geo = new THREE.PlaneGeometry(1, 1);
     textureLoader.load('./MISR_40m_radiance_nadir_2048x2048.png', function (texture) {
         texture.colorSpace = THREE.SRGBColorSpace;
-        const plane_mat = new THREE.MeshBasicMaterial({
+        const plane_mat = new THREE.MeshPhongMaterial({
             map: texture,
             side: THREE.DoubleSide
         });
@@ -93,13 +98,13 @@ async function init() {
 
     const ground_size = 1000; // for spherical ground
     const ground_geo = new THREE.PlaneGeometry(ground_size, ground_size);
-    const ground_mat = new THREE.MeshBasicMaterial({
-        color: 0x0a539e
+    const ground_mat = new THREE.MeshPhongMaterial({
+        color: 0x083471
     });
     ground = new THREE.Mesh(ground_geo, ground_mat);
-    //scene.add(ground);
+    scene.add(ground);
     ground.rotation.x = -Math.PI / 2.0;
-    ground.position.set(0, -2, 0);
+    ground.position.set(0, -0.01, 0);
 
     window.addEventListener('resize', onWindowResize, false);
 }
@@ -128,7 +133,6 @@ async function loadGLTF(modelName) {
 
 async function loadNRRD(modelName) {
     return new Promise((resolve, reject) => {
-        console.log('Hello, NRRD!');
         new NRRDLoader().load(modelName, async function (volume) {
             clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
 
@@ -221,19 +225,23 @@ function createPointCloudMaterial() {
 
         void main() {
             #if NUM_CLIPPING_PLANES > 0
+                #pragma unroll_loop_start
                 for (int i = 0; i < UNION_CLIPPING_PLANES; ++i) {
                     vec4 plane = clippingPlanes[i];
                     if (dot(vViewPosition, plane.xyz) > plane.w) {
                         discard;
                     }
                 }
+                #pragma unroll_loop_end
                 
                 #if UNION_CLIPPING_PLANES < NUM_CLIPPING_PLANES
                     bool clipped = true;
+                    #pragma unroll_loop_start
                     for (int i = UNION_CLIPPING_PLANES; i < NUM_CLIPPING_PLANES; ++ i) {
                         vec4 plane = clippingPlanes[ i ];
                         clipped = (dot(vViewPosition, plane.xyz) > plane.w) && clipped;
                     }
+                    #pragma unroll_loop_end
 
                     if (clipped) {
                         discard;
@@ -249,7 +257,7 @@ function createPointCloudMaterial() {
     const material = new THREE.ShaderMaterial({
         glslVersion: THREE.GLSL3,
         uniforms: {
-            'uScale': { value: 5.0 }
+            'uScale': { value: defaultPointSize }
         },
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
@@ -341,7 +349,7 @@ function initGUI() {
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
         const propsCloud = {
-            scale: 5.0
+            scale: defaultPointSize
         }
 
         function cloudsChanged() {
