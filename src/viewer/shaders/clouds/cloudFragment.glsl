@@ -19,14 +19,14 @@ in vec3 vDirection;
 
 out vec4 color;
 
-uniform vec3 base;
-uniform sampler3D map;
+uniform vec3 uBase;
+uniform sampler3D uMap;
 
-uniform float threshold;
-uniform float range;
-uniform float opacity;
-uniform float steps;
-uniform float frame;
+uniform float uThreshold;
+uniform float uRange;
+uniform float uOpacity;
+uniform float uSteps;
+uniform float uFrame;
 
 uint wang_hash(uint seed) {
     seed = (seed ^ 61u) ^ (seed >> 16u);
@@ -54,21 +54,8 @@ vec2 hitBox(vec3 orig, vec3 dir) {
     return vec2(t0, t1);
 }
 
-vec2 hitBoxClipPlane(vec3 orig, vec3 dir, vec3 plane) {
-    const vec3 box_min = vec3(-0.5, -0.5, -0.5);
-    const vec3 box_max = vec3(0.5, 0.5, 0.5);
-    vec3 inv_dir = 1.0 / dir;
-    vec3 tmin_tmp = (box_min - orig) * inv_dir;
-    vec3 tmax_tmp = (box_max - orig) * inv_dir;
-    vec3 tmin = min(tmin_tmp, tmax_tmp);
-    vec3 tmax = max(tmin_tmp, tmax_tmp);
-    float t0 = max(tmin.x, max(tmin.y, tmin.z));
-    float t1 = min(tmax.x, min(tmax.y, tmax.z));
-    return vec2(t0, t1);
-}
-
 float sample1(vec3 p) {
-    return texture(map, p).r;
+    return texture(uMap, p).r;
 }
 
 float shading(vec3 coord) {
@@ -116,8 +103,6 @@ void main() {
         #endif
     #endif
 
-    
-
     if (bounds.x > bounds.y) {
         discard;
     }
@@ -127,23 +112,23 @@ void main() {
     vec3 p = vOrigin + bounds.x * rayDir;
     vec3 inc = 1.0 / abs(rayDir);
     float delta = min(inc.x, min(inc.y, inc.z));
-    delta /= steps;
+    delta /= uSteps;
 
     // Jitter
 
     // Nice little seed from
     // https://blog.demofox.org/2020/05/25/casual-shadertoy-path-tracing-1-basic-camera-diffuse-emissive/
-    uint seed = uint(gl_FragCoord.x) * uint(1973) + uint(gl_FragCoord.y) * uint(9277) + uint(frame) * uint(26699);
-    vec3 size = vec3(textureSize(map, 0));
+    uint seed = uint(gl_FragCoord.x) * uint(1973) + uint(gl_FragCoord.y) * uint(9277) + uint(uFrame) * uint(26699);
+    vec3 size = vec3(textureSize(uMap, 0));
     float randNum = randomFloat(seed) * 2.0 - 1.0;
     p += rayDir * randNum * (1.0 / size);
 
-    vec4 ac = vec4(base, 0.0);
+    vec4 ac = vec4(uBase, 0.0);
 
     for (float t = bounds.x; t < bounds.y; t += delta) {
         float d = sample1(p + 0.5);
 
-        d = smoothstep(threshold - range, threshold + range, d) * opacity;
+        d = smoothstep(uThreshold - uRange, uThreshold + uRange, d) * uOpacity;
 
         float col = shading(p + 0.5) * 0.25 + ((p.x + p.y) * 0.25) + 0.6;
 

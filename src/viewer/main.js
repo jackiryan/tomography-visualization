@@ -1,5 +1,6 @@
 // main.js
 import * as THREE from 'three';
+import gsap from 'gsap';
 
 import Stats from 'three/addons/libs/stats.module.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
@@ -13,7 +14,7 @@ import cloudFragmentShader from './shaders/clouds/cloudFragment.glsl';
 
 let container, stats;
 let camera, controls, scene, renderer;
-let model, image_plane, clipPlane, ground;
+let cloudModel, satModel, imagePlane, clipPlane, ground;
 let sky, sun;
 
 const useGltf = true;
@@ -34,6 +35,8 @@ if (useGltf) {
     modelFile = `${baseName}.gltf`;
 }
 
+const satelliteFile = './CloudSat.glb';
+
 console.log(`loading model: ${modelFile}`);
 console.log(`model dimension: ${modelDim}`);
 
@@ -48,7 +51,7 @@ async function init() {
 
     const aspect = window.innerWidth / window.innerHeight;
     camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 5000);
-    camera.position.set(0, 1, 0);
+    camera.position.set(-5, 2, -5);
     camera.rotation.set(-Math.PI / 2.0, 0, 0);
 
     scene = new THREE.Scene();
@@ -73,12 +76,15 @@ async function init() {
     if (useGltf) {
         await loadGLTF(modelFile).then(() => {
             renderer.setAnimationLoop(animate);
+            camera.lookAt(cloudModel);
         });
     } else {
         await loadNRRD(modelFile).then(() => {
             renderer.setAnimationLoop(animate);
         });
     }
+
+    await loadSatellite(satelliteFile);
 
     await initSky().then(() => {
         initGUI();
@@ -97,12 +103,12 @@ async function init() {
             map: texture,
             side: THREE.DoubleSide
         });
-        image_plane = new THREE.Mesh(plane_geo, plane_mat);
-        image_plane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
-        scene.add(image_plane);
+        imagePlane = new THREE.Mesh(plane_geo, plane_mat);
+        imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
+        scene.add(imagePlane);
     });
 
-    const ground_size = 1000; // for spherical ground
+    const ground_size = 100; // for spherical ground
     const ground_geo = new THREE.PlaneGeometry(ground_size, ground_size);
     const ground_mat = new THREE.MeshPhongMaterial({
         color: 0x083471
@@ -119,22 +125,38 @@ async function loadGLTF(modelName) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (gltf) {
             clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
-            model = gltf.scene;
-            model.traverse((node) => {
+            cloudModel = gltf.scene;
+            cloudModel.traverse((node) => {
                 if (node instanceof THREE.Points) {
                     node.material = createPointCloudMaterial();
                 }
             });
-            model.scale.set(1 / modelDim, 1 / modelDim, 1 / modelDim);
-            model.position.x -= 0.5;
-            model.position.z -= 0.5;
-            model.scale.z *= -1.0;
+            cloudModel.scale.set(1 / modelDim, 1 / modelDim, 1 / modelDim);
+            cloudModel.position.x -= 0.5;
+            cloudModel.position.z -= 0.5;
+            cloudModel.scale.z *= -1.0;
             //model.rotation.x = Math.PI;
             //model.rotation.z = Math.PI;
-            scene.add(model);
+            scene.add(cloudModel);
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load point cloud model: ${error}`);
+            reject(error);
+        });
+    });
+}
+
+async function loadSatellite(modelName) {
+    return new Promise((resolve, reject) => {
+        new GLTFLoader().load(modelName, function (glb) {
+            satModel = glb.scene;
+            satModel.position.y = 2;
+            satModel.rotation.y = Math.PI / 2;
+            satModel.scale.set(0.1, 0.1, 0.1);
+            scene.add(satModel);
+            resolve();
+        }, undefined, function (error) {
+            console.error(`Failed to load satellite model: ${error}`);
             reject(error);
         });
     });
@@ -155,14 +177,14 @@ async function loadNRRD(modelName) {
             const material = new THREE.RawShaderMaterial({
                 glslVersion: THREE.GLSL3,
                 uniforms: {
-                    base: { value: new THREE.Color(0x798aa0) },
-                    map: { value: texture },
-                    cameraPos: { value: new THREE.Vector3() },
-                    threshold: { value: 0.01 },
-                    opacity: { value: 1.0 },
-                    range: { value: 0.0 },
-                    steps: { value: 200 },
-                    frame: { value: 0 }
+                    uBase: { value: new THREE.Color(0x798aa0) },
+                    uMap: { value: texture },
+                    uCameraPos: { value: new THREE.Vector3() },
+                    uThreshold: { value: 0.01 },
+                    uOpacity: { value: 1.0 },
+                    uRange: { value: 0.0 },
+                    uSteps: { value: 200 },
+                    uFrame: { value: 0 }
                 },
                 vertexShader: cloudVertexShader,
                 fragmentShader: cloudFragmentShader,
@@ -172,11 +194,11 @@ async function loadNRRD(modelName) {
                 clippingPlanes: [clipPlane]
             });
 
-            model = new THREE.Mesh(geometry, material);
-            model.position.set(0.375, 0.13, 0.375);
-            model.rotation.set(-Math.PI / 2.0, 0, 0);
-            model.scale.set(0.25, 0.25, 0.25);
-            scene.add(model);
+            cloudModel = new THREE.Mesh(geometry, material);
+            cloudModel.position.set(0.375, 0.13, 0.375);
+            cloudModel.rotation.set(-Math.PI / 2.0, 0, 0);
+            cloudModel.scale.set(0.25, 0.25, 0.25);
+            scene.add(cloudModel);
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load point cloud data: ${error}`);
@@ -365,11 +387,11 @@ function initGUI() {
         }
 
         function cloudsChanged() {
-            model.traverse((node) => {
+            cloudModel.traverse((node) => {
                 if (node instanceof THREE.Points) {
                     const uniforms = node.material.uniforms;
                     uniforms['uScale'].value = propsCloud.scale;
-                    model.position.y = propsCloud.posY;
+                    cloudModel.position.y = propsCloud.posY;
                 }
             });
         }
@@ -384,11 +406,11 @@ function initGUI() {
         }
 
         function cloudsChanged() {
-            const uniforms = model.material.uniforms;
-            uniforms['threshold'].value = propsCloud.qcThreshold / 100.0;
-            uniforms['opacity'].value = propsCloud.opacity / 100.0;
-            uniforms['range'].value = propsCloud.range;
-            uniforms['steps'].value = propsCloud.raymarchSteps;
+            const uniforms = cloudModel.material.uniforms;
+            uniforms['uThreshold'].value = propsCloud.qcThreshold / 100.0;
+            uniforms['uOpacity'].value = propsCloud.opacity / 100.0;
+            uniforms['uRange'].value = propsCloud.range;
+            uniforms['uSteps'].value = propsCloud.raymarchSteps;
         }
 
         folderCloud.add(propsCloud, 'qcThreshold', 0, 100, 0.1).onChange(cloudsChanged);
@@ -418,7 +440,7 @@ function onWindowResize() {
 
 function animate() {
     if (!useGltf) {
-        model.material.uniforms.cameraPos.value.copy(camera.position);
+        cloudModel.material.uniforms.uCameraPos.value.copy(camera.position);
     }
     controls.update();
 
