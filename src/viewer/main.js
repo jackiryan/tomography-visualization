@@ -10,11 +10,12 @@ import { NRRDLoader } from 'three/examples/jsm/loaders/NRRDLoader.js';
 import { Sky } from './sky.js';
 import cloudVertexShader from './shaders/clouds/cloudVertex.glsl';
 import cloudFragmentShader from './shaders/clouds/cloudFragment.glsl';
-
+import atmVertexShader from './shaders/atm/atmVertex.glsl';
+import atmFragmentShader from './shaders/atm/atmFragment.glsl';
 
 let container, stats;
 let camera, controls, scene, renderer;
-let cloudModel, satModel, imagePlane, clipPlane, ground;
+let cloudModel, satModel, imagePlane, clipPlane, ground, atm;
 let sky, sun;
 
 const useGltf = true;
@@ -41,6 +42,8 @@ console.log(`loading model: ${modelFile}`);
 console.log(`model dimension: ${modelDim}`);
 
 const defaultPointSize = 2.0;
+const initOffset = 3.5;
+const initSatScale = 0.04;
 
 await init();
 
@@ -51,8 +54,8 @@ async function init() {
 
     const aspect = window.innerWidth / window.innerHeight;
     camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 5000);
-    camera.position.set(-5, 2, -5);
-    camera.rotation.set(-Math.PI / 2.0, 0, 0);
+    camera.position.set(0, 2, 0);
+    //camera.rotation.set(-Math.PI / 2.0, 0, 0);
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000011);
@@ -65,8 +68,14 @@ async function init() {
     renderer.localClippingEnabled = false;
     container.appendChild(renderer.domElement);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 10);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 5);
     scene.add(ambientLight);
+    const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x083471, 2);
+    scene.add(hemisphereLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 10);
+    dirLight.position.set(-10, 10, 0);
+    dirLight.rotation.set(0, 0, 3 * Math.PI / 4);
+    scene.add(dirLight);
 
     stats = new Stats();
     container.appendChild(stats.dom);
@@ -75,23 +84,26 @@ async function init() {
 
     if (useGltf) {
         await loadGLTF(modelFile).then(() => {
-            renderer.setAnimationLoop(animate);
+            fitCameraToObject(camera, cloudModel, initOffset);
             camera.lookAt(cloudModel);
+            renderer.setAnimationLoop(animate);
         });
     } else {
         await loadNRRD(modelFile).then(() => {
+            fitCameraToObject(camera, cloudModel, initOffset);
+            camera.lookAt(cloudModel);
             renderer.setAnimationLoop(animate);
         });
     }
 
     await loadSatellite(satelliteFile);
 
-    await initSky().then(() => {
-        initGUI();
-    });
+    //await initSky().then(() => {
+    //    initGUI();
+    //});
 
     const textureLoader = new THREE.TextureLoader();
-    const plane_geo = new THREE.PlaneGeometry(1, 1);
+    const planeGeo = new THREE.PlaneGeometry(1, 1);
     textureLoader.load('./MISR_40m_radiance_nadir_2048x2048.png', function (texture) {
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.wrapS = THREE.RepeatWrapping;
@@ -103,20 +115,36 @@ async function init() {
             map: texture,
             side: THREE.DoubleSide
         });
-        imagePlane = new THREE.Mesh(plane_geo, plane_mat);
+        imagePlane = new THREE.Mesh(planeGeo, plane_mat);
         imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
         scene.add(imagePlane);
     });
 
-    const ground_size = 100; // for spherical ground
-    const ground_geo = new THREE.PlaneGeometry(ground_size, ground_size);
-    const ground_mat = new THREE.MeshPhongMaterial({
+    const groundSize = 100; // for spherical ground
+    const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
+    const atmGeo = new THREE.SphereGeometry(groundSize * 1.005, 128, 128);
+    const groundMat = new THREE.MeshPhongMaterial({
         color: 0x083471
     });
-    ground = new THREE.Mesh(ground_geo, ground_mat);
+    const atmMat = new THREE.ShaderMaterial({
+        vertexShader: atmVertexShader,
+        fragmentShader: atmFragmentShader,
+        uniforms: {
+            uDayColor: new THREE.Uniform(new THREE.Color(0x00b5e2)),
+            uAtmFalloff: new THREE.Uniform(0.1)
+        },
+        side: THREE.BackSide,
+        transparent: true
+    });
+    ground = new THREE.Mesh(groundGeo, groundMat);
+    atm = new THREE.Mesh(atmGeo, atmMat);
     scene.add(ground);
-    ground.rotation.x = -Math.PI / 2.0;
-    ground.position.set(0, -0.01, 0);
+    scene.add(atm);
+    //ground.rotation.x = -Math.PI / 2.0;
+    ground.position.set(5, -100.01, 5);
+    atm.position.set(5, -100.01, 5);
+
+    initGUI();
 
     window.addEventListener('resize', onWindowResize, false);
 }
@@ -150,9 +178,9 @@ async function loadSatellite(modelName) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (glb) {
             satModel = glb.scene;
-            satModel.position.y = 2;
-            satModel.rotation.y = Math.PI / 2;
-            satModel.scale.set(0.1, 0.1, 0.1);
+            satModel.position.y = 0.75;
+            satModel.rotation.y = 0.15 * Math.PI;
+            satModel.scale.set(initSatScale, initSatScale, initSatScale);
             scene.add(satModel);
             resolve();
         }, undefined, function (error) {
@@ -195,9 +223,10 @@ async function loadNRRD(modelName) {
             });
 
             cloudModel = new THREE.Mesh(geometry, material);
-            cloudModel.position.set(0.375, 0.13, 0.375);
-            cloudModel.rotation.set(-Math.PI / 2.0, 0, 0);
-            cloudModel.scale.set(0.25, 0.25, 0.25);
+            cloudModel.position.set(0, 0.6, 0);
+            //cloudModel.position.set(0.375, 0.13, 0.375);
+            //cloudModel.rotation.set(-Math.PI / 2.0, 0, 0);
+            //cloudModel.scale.set(0.25, 0.25, 0.25);
             scene.add(cloudModel);
             resolve();
         }, undefined, function (error) {
@@ -303,6 +332,7 @@ function createPointCloudMaterial() {
 
 function initGUI() {
     const gui = new GUI();
+
     const folderClip = gui.addFolder('Clip Plane');
     const propsClip = {
         get 'enabled'() {
@@ -342,6 +372,11 @@ function initGUI() {
             clipPlane.constant = v;
         },
     };
+    folderClip.add(propsClip, 'enabled');
+    folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
+    folderClip.add(propsClip, 'planePosition', -1.0, 1.0, 0.01);
+
+    /*
     const folderSky = gui.addFolder('Sky Parameters');
     const propsSky = {
         turbidity: 0,
@@ -375,16 +410,26 @@ function initGUI() {
         renderer.render(scene, camera);
     }
 
-    folderClip.add(propsClip, 'enabled');
-    folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
-    folderClip.add(propsClip, 'planePosition', -1.0, 1.0, 0.01);
+    folderSky.add(propsSky, 'turbidity', 0.0, 20.0, 0.1).onChange(skyChanged);
+    folderSky.add(propsSky, 'rayleigh', 0.0, 4, 0.001).onChange(skyChanged);
+    folderSky.add(propsSky, 'mieCoefficient', 0.0, 0.1, 0.001).onChange(skyChanged);
+    folderSky.add(propsSky, 'mieDirectionalG', 0.0, 1, 0.001).onChange(skyChanged);
+    folderSky.add(propsSky, 'elevation', -10, 90, 0.1).onChange(skyChanged);
+    folderSky.add(propsSky, 'azimuth', - 180, 180, 0.1).onChange(skyChanged);
+    folderSky.add(propsSky, 'exposure', 0, 1, 0.0001).onChange(skyChanged);
+    folderSky.add(propsSky, 'atmStart', -1, 1, 0.01).onChange(skyChanged);
+    folderSky.add(propsSky, 'atmStop', -1, 1, 0.01).onChange(skyChanged);
+
+    skyChanged();
+    */
 
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
         const propsCloud = {
             scale: defaultPointSize,
-            posY: 0.0
-        }
+            posY: 0.0,
+            rotY: 0.0
+        };
 
         function cloudsChanged() {
             cloudModel.traverse((node) => {
@@ -397,13 +442,17 @@ function initGUI() {
         }
         folderCloud.add(propsCloud, 'scale', 0.1, 10, 0.1).onChange(cloudsChanged);
         folderCloud.add(propsCloud, 'posY', 0.0, 0.5, 0.01).onChange(cloudsChanged);
+        folderCloud.add(propsCloud, 'rotY', 0, Math.PI, 0.01).onChange(() => {
+            imagePlane.rotation.z = -propsCloud.rotY;
+            cloudModel.rotation.y = propsCloud.rotY;
+        });
     } else {
         const propsCloud = {
             qcThreshold: 1.0,
             opacity: 100.0,
             range: 0.0,
             raymarchSteps: 200
-        }
+        };
 
         function cloudsChanged() {
             const uniforms = cloudModel.material.uniforms;
@@ -419,17 +468,59 @@ function initGUI() {
         folderCloud.add(propsCloud, 'raymarchSteps', 0, 500, 1).onChange(cloudsChanged);
     }
 
-    folderSky.add(propsSky, 'turbidity', 0.0, 20.0, 0.1).onChange(skyChanged);
-    folderSky.add(propsSky, 'rayleigh', 0.0, 4, 0.001).onChange(skyChanged);
-    folderSky.add(propsSky, 'mieCoefficient', 0.0, 0.1, 0.001).onChange(skyChanged);
-    folderSky.add(propsSky, 'mieDirectionalG', 0.0, 1, 0.001).onChange(skyChanged);
-    folderSky.add(propsSky, 'elevation', -10, 90, 0.1).onChange(skyChanged);
-    folderSky.add(propsSky, 'azimuth', - 180, 180, 0.1).onChange(skyChanged);
-    folderSky.add(propsSky, 'exposure', 0, 1, 0.0001).onChange(skyChanged);
-    folderSky.add(propsSky, 'atmStart', -1, 1, 0.01).onChange(skyChanged);
-    folderSky.add(propsSky, 'atmStop', -1, 1, 0.01).onChange(skyChanged);
+    const folderMisc = gui.addFolder('Misc Parameters');
+    const propsMisc = {
+        modelOffset: initOffset,
+        satScale: initSatScale,
+        satRotY: 0.2 * Math.PI,
+        atmFalloff: 0.1,
+        atmColor: 0x00b5e2
+    }
+    folderMisc.add(propsMisc, 'modelOffset', 1, 20, 0.01).onChange(() => {
+        fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
+    });
+    folderMisc.add(propsMisc, 'satScale', 0, 0.2, 0.001).onChange(() => {
+        satModel.scale.set(propsMisc.satScale, propsMisc.satScale, propsMisc.satScale);
+    });
+    folderMisc.add(propsMisc, 'satRotY', -Math.PI, Math.PI, 0.01).onChange(() => {
+        satModel.rotation.y = propsMisc.satRotY;
+    });
+    folderMisc.add(propsMisc, 'atmFalloff', 0.1, 5, 0.005).onChange(() => {
+        const uniforms = atm.material.uniforms;
+        uniforms['uAtmFalloff'].value = propsMisc.atmFalloff;
+    });
+    folderMisc.addColor(propsMisc, 'atmColor').onChange(() => {
+        atm.material.uniforms.uDayColor.value.set(propsMisc.atmColor);
+    });
+}
 
-    skyChanged();
+function fitCameraToObject(camera, object, offset) {
+
+    offset = offset || 1.25;
+
+    const boundingBox = new THREE.Box3();
+
+    // get bounding box of object - this will be used to setup controls and camera
+    boundingBox.setFromObject(object);
+
+    const dummy = new THREE.Vector3();
+    const size = boundingBox.getSize(dummy);
+
+    // get the max side of the bounding box (fits to width OR height as needed )
+    const maxDim = Math.max(size.x, size.y, size.z);
+    let cameraZ = Math.abs(maxDim / 4 * Math.tan(camera.fov * 2));
+    cameraZ *= offset;
+
+    // zoom out a little so that objects don't fill the screen
+    camera.position.x = -cameraZ;
+    camera.position.y = 0.4 * cameraZ;
+    camera.position.z = cameraZ;
+
+    // const minZ = boundingBox.min.z;
+    // const cameraToFarEdge = (minZ < 0) ? -minZ + cameraZ : cameraZ - minZ;
+
+    // camera.far = cameraToFarEdge * 1000;
+    camera.updateProjectionMatrix();
 }
 
 function onWindowResize() {

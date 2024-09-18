@@ -6,8 +6,8 @@ import {
     SphereGeometry,
     Vector3
 } from 'three';
-import skyVertexShader from './shaders/sky/skyVertex.glsl';
-import skyFragmentShader from './shaders/sky/skyFragment.glsl';
+import skyVertexShader from './shaders/sky/skyStarVertex.glsl';
+import skyFragmentShader from './shaders/sky/skyStarFragment.glsl';
 
 /**
  * Based on "A Practical Analytic Model for Daylight"
