@@ -12,6 +12,7 @@ import cloudVertexShader from './shaders/clouds/cloudVertex.glsl';
 import cloudFragmentShader from './shaders/clouds/cloudFragment.glsl';
 import atmVertexShader from './shaders/atm/atmVertex.glsl';
 import atmFragmentShader from './shaders/atm/atmFragment.glsl';
+import { oscTriangle } from 'three/webgpu';
 
 let container, stats;
 let camera, controls, scene, renderer;
@@ -166,7 +167,6 @@ async function loadGLTF(modelName) {
             cloudModel.position.x -= 0.5;
             cloudModel.position.z -= 0.5;
             cloudModel.scale.z *= -1.0;
-            console.log(cloudModel.position);
             //model.rotation.x = Math.PI;
             //model.rotation.z = Math.PI;
             scene.add(cloudModel);
@@ -348,6 +348,10 @@ function positionPlane(phi, theta) {
     imagePlane.position.copy(planePosition.add(groundPosition));
     imagePlane.quaternion.setFromUnitVectors(up, normal);
     cloudModel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+    satModel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+    satModel.position.copy(imagePlane.position);
+    satModel.position.y += 0.75;
+    imagePlane.rotation.z = cloudModel.rotation.y;
     cloudModel.position.copy(planePosition.add(new THREE.Vector3(-0.5, 0, -0.5)));
 }
 
@@ -390,7 +394,19 @@ function initGUI() {
             return clipPlane.constant;
         },
         set 'planePosition'(v) {
-            clipPlane.constant = v;
+            let imagePos;
+            switch (propsClip.axis) {
+                case 'X':
+                    imagePos = imagePlane.position.x;
+                    break;
+                case 'Y':
+                    imagePos = imagePlane.position.y;
+                    break;
+                case 'Z':
+                    imagePos = imagePlane.position.z;
+                    break;
+            }
+            clipPlane.constant = imagePos + v;
         },
     };
     folderClip.add(propsClip, 'enabled');
