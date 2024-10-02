@@ -44,6 +44,8 @@ console.log(`model dimension: ${modelDim}`);
 const defaultPointSize = 2.0;
 const initOffset = 3.5;
 const initSatScale = 0.04;
+const groundSize = 100; // for spherical ground
+const groundPosition = new THREE.Vector3(0, -100, 0);
 
 await init();
 
@@ -82,6 +84,7 @@ async function init() {
 
     controls = new OrbitControls(camera, renderer.domElement);
 
+
     if (useGltf) {
         await loadGLTF(modelFile).then(() => {
             fitCameraToObject(camera, cloudModel, initOffset);
@@ -118,9 +121,9 @@ async function init() {
         imagePlane = new THREE.Mesh(planeGeo, plane_mat);
         imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
         scene.add(imagePlane);
+        controls.target = imagePlane.position;
     });
 
-    const groundSize = 100; // for spherical ground
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
     const atmGeo = new THREE.SphereGeometry(groundSize * 1.005, 128, 128);
     const groundMat = new THREE.MeshPhongMaterial({
@@ -141,8 +144,8 @@ async function init() {
     scene.add(ground);
     scene.add(atm);
     //ground.rotation.x = -Math.PI / 2.0;
-    ground.position.set(5, -100.01, 5);
-    atm.position.set(5, -100.01, 5);
+    ground.position.copy(groundPosition);
+    atm.position.copy(groundPosition);
 
     initGUI();
 
@@ -163,6 +166,7 @@ async function loadGLTF(modelName) {
             cloudModel.position.x -= 0.5;
             cloudModel.position.z -= 0.5;
             cloudModel.scale.z *= -1.0;
+            console.log(cloudModel.position);
             //model.rotation.x = Math.PI;
             //model.rotation.z = Math.PI;
             scene.add(cloudModel);
@@ -330,6 +334,23 @@ function createPointCloudMaterial() {
     return material;
 }
 
+function positionPlane(phi, theta) {
+    const planePosition = new THREE.Vector3(
+        Math.sin(phi) * Math.cos(theta),
+        Math.cos(phi),
+        Math.sin(phi) * Math.sin(theta)).multiplyScalar(groundSize);
+
+    // This accounts for the -pi / 2 rotation on the x axis that the plane requires. Otherwise it will appear
+    // perpendicular
+    const up = new THREE.Vector3(0, 0, 1);
+    const normal = new THREE.Vector3(planePosition.x, planePosition.y, planePosition.z).normalize();
+
+    imagePlane.position.copy(planePosition.add(groundPosition));
+    imagePlane.quaternion.setFromUnitVectors(up, normal);
+    cloudModel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+    cloudModel.position.copy(planePosition.add(new THREE.Vector3(-0.5, 0, -0.5)));
+}
+
 function initGUI() {
     const gui = new GUI();
 
@@ -436,12 +457,12 @@ function initGUI() {
                 if (node instanceof THREE.Points) {
                     const uniforms = node.material.uniforms;
                     uniforms['uScale'].value = propsCloud.scale;
-                    cloudModel.position.y = propsCloud.posY;
+                    cloudModel.position.y = imagePlane.position.y + propsCloud.posY;
                 }
             });
         }
         folderCloud.add(propsCloud, 'scale', 0.1, 10, 0.1).onChange(cloudsChanged);
-        folderCloud.add(propsCloud, 'posY', 0.0, 0.5, 0.01).onChange(cloudsChanged);
+        folderCloud.add(propsCloud, 'posY', -0.2, 0.2, 0.01).onChange(cloudsChanged);
         folderCloud.add(propsCloud, 'rotY', 0, Math.PI, 0.01).onChange(() => {
             imagePlane.rotation.z = -propsCloud.rotY;
             cloudModel.rotation.y = propsCloud.rotY;
@@ -471,6 +492,8 @@ function initGUI() {
     const folderMisc = gui.addFolder('Misc Parameters');
     const propsMisc = {
         modelOffset: initOffset,
+        modelPhi: 0,
+        modelTheta: 0,
         satScale: initSatScale,
         satRotY: 0.2 * Math.PI,
         atmFalloff: 0.1,
@@ -478,6 +501,19 @@ function initGUI() {
     }
     folderMisc.add(propsMisc, 'modelOffset', 1, 20, 0.01).onChange(() => {
         fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
+        controls.update();
+    });
+    folderMisc.add(propsMisc, 'modelPhi', -Math.PI / 8, Math.PI / 8, 0.001).onChange(() => {
+        positionPlane(propsMisc.modelPhi, propsMisc.modelTheta);
+        controls.target = imagePlane.position;
+        fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
+        controls.update();
+    });
+    folderMisc.add(propsMisc, 'modelTheta', -Math.PI / 4, Math.PI / 4, 0.01).onChange(() => {
+        positionPlane(propsMisc.modelPhi, propsMisc.modelTheta);
+        controls.target = imagePlane.position;
+        fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
+        controls.update();
     });
     folderMisc.add(propsMisc, 'satScale', 0, 0.2, 0.001).onChange(() => {
         satModel.scale.set(propsMisc.satScale, propsMisc.satScale, propsMisc.satScale);
@@ -512,9 +548,9 @@ function fitCameraToObject(camera, object, offset) {
     cameraZ *= offset;
 
     // zoom out a little so that objects don't fill the screen
-    camera.position.x = -cameraZ;
-    camera.position.y = 0.4 * cameraZ;
-    camera.position.z = cameraZ;
+    camera.position.x = -cameraZ + object.position.x;
+    camera.position.y = 0.4 * cameraZ + object.position.y;
+    camera.position.z = cameraZ + object.position.z;
 
     // const minZ = boundingBox.min.z;
     // const cameraToFarEdge = (minZ < 0) ? -minZ + cameraZ : cameraZ - minZ;
