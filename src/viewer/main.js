@@ -63,7 +63,9 @@ async function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000011);
 
-    renderer = new THREE.WebGLRenderer();
+    renderer = new THREE.WebGLRenderer({
+        antialias: true
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -122,11 +124,11 @@ async function init() {
         imagePlane = new THREE.Mesh(planeGeo, plane_mat);
         imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
         scene.add(imagePlane);
-        controls.target = imagePlane.position;
+        initGUI();
     });
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
-    const atmGeo = new THREE.SphereGeometry(groundSize * 1.005, 128, 128);
+    const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
     const groundMat = new THREE.MeshPhongMaterial({
         color: 0x083471
     });
@@ -147,8 +149,6 @@ async function init() {
     //ground.rotation.x = -Math.PI / 2.0;
     ground.position.copy(groundPosition);
     atm.position.copy(groundPosition);
-
-    initGUI();
 
     window.addEventListener('resize', onWindowResize, false);
 }
@@ -464,7 +464,7 @@ function initGUI() {
     if (useGltf) {
         const propsCloud = {
             scale: defaultPointSize,
-            posY: 0.0,
+            posY: -0.07,
             rotY: 0.0
         };
 
@@ -508,8 +508,8 @@ function initGUI() {
     const folderMisc = gui.addFolder('Misc Parameters');
     const propsMisc = {
         modelOffset: initOffset,
-        modelPhi: 0,
-        modelTheta: 0,
+        modelPhi: -0.1,
+        modelTheta: 0.4,
         satScale: initSatScale,
         satRotY: 0.2 * Math.PI,
         atmFalloff: 0.1,
@@ -544,6 +544,12 @@ function initGUI() {
     folderMisc.addColor(propsMisc, 'atmColor').onChange(() => {
         atm.material.uniforms.uDayColor.value.set(propsMisc.atmColor);
     });
+
+    positionPlane(propsMisc.modelPhi, propsMisc.modelTheta);
+    cloudModel.position.y = imagePlane.position.y - 0.07;
+    controls.target = imagePlane.position;
+    fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
+    controls.update();
 }
 
 function fitCameraToObject(camera, object, offset) {
