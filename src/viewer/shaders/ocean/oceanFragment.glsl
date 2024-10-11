@@ -22,7 +22,7 @@ void main() {
     vec3 ambient = uAmbientColor;
 
     // Diffuse component (Lambertian reflectance)
-    float diff = pow(max(dot(normal, lightDir), 0.0), 20.0);
+    float diff = max(dot(normal, lightDir), 0.0);
     vec3 diffuse = uAtmColor * diff;
 
     // Specular component (Blinn-Phong reflection model)

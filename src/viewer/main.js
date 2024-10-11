@@ -16,7 +16,7 @@ import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
 let container, stats;
 let camera, controls, scene, renderer;
-let cloudModel, satModel, imagePlane, clipPlane, ground, atm;
+let cloudModel, satModel, imagePlane, clipPlane, ground, atm, frustum;
 let sky;
 
 const useGltf = true;
@@ -76,7 +76,7 @@ async function init() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
-    renderer.localClippingEnabled = false;
+    renderer.localClippingEnabled = true;
     container.appendChild(renderer.domElement);
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 5);
@@ -111,11 +111,11 @@ async function init() {
     await loadPlane(planeTexture);
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
-    const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
+    //const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
     //const groundMat = new THREE.MeshPhongMaterial({
     //    color: 0x083471
     //});
-    const sunDir = new THREE.Vector3(-10, 10, 0);
+    const sunDir = new THREE.Vector3(1, 1, 0).normalize();
     const groundMat = new THREE.ShaderMaterial({
         vertexShader: oceanVertexShader,
         fragmentShader: oceanFragmentShader,
@@ -123,10 +123,11 @@ async function init() {
             uSunDirection: new THREE.Uniform(sunDir),
             uAtmColor: new THREE.Uniform(new THREE.Color(0xffffff)),
             uAmbientColor: new THREE.Uniform(new THREE.Color(0x0d2d63)),
-            uSpecularColor: new THREE.Uniform(new THREE.Color(0xffffff)),
-            uShininess: new THREE.Uniform(32.0)
+            uSpecularColor: new THREE.Uniform(new THREE.Color(0x111111)),
+            uShininess: new THREE.Uniform(30.0)
         }
     });
+    /*
     const atmMat = new THREE.ShaderMaterial({
         vertexShader: atmVertexShader,
         fragmentShader: atmFragmentShader,
@@ -137,12 +138,13 @@ async function init() {
         side: THREE.BackSide,
         transparent: true
     });
+    */
     ground = new THREE.Mesh(groundGeo, groundMat);
-    atm = new THREE.Mesh(atmGeo, atmMat);
+    //atm = new THREE.Mesh(atmGeo, atmMat);
     scene.add(ground);
-    scene.add(atm);
+    //scene.add(atm);
     ground.position.copy(groundPosition);
-    atm.position.copy(groundPosition);
+    //atm.position.copy(groundPosition);
 
     window.addEventListener('resize', onWindowResize, false);
 }
@@ -150,7 +152,7 @@ async function init() {
 async function loadGLTF(modelName) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (gltf) {
-            clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
+            clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), -9.2);
             cloudModel = gltf.scene;
             cloudModel.traverse((node) => {
                 if (node instanceof THREE.Points) {
@@ -178,6 +180,27 @@ async function loadSatellite(modelName) {
             satModel.rotation.y = 0.15 * Math.PI;
             satModel.scale.set(initSatScale, initSatScale, initSatScale);
             scene.add(satModel);
+
+            const frustumHeight = satModel.position.y / initSatScale;  // Adjust as needed
+            const frustumRadius = 1.0 / initSatScale; // Adjust as needed
+            const frustumGeo = new THREE.BufferGeometry();
+            const vertices = new Float32Array([
+                0, 0, 0,
+                -frustumRadius / 2, -frustumHeight, 0,
+                frustumRadius / 2, -frustumHeight, 0
+            ]);
+            frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            frustumGeo.setIndex([0, 1, 2]);
+            frustumGeo.computeVertexNormals();
+            const frustumMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ff00,   // Green color
+                transparent: true,
+                opacity: 0.25,      // 25% opacity
+                side: THREE.DoubleSide
+            });
+            frustum = new THREE.Mesh(frustumGeo, frustumMaterial);
+            frustum.rotation.set(0, Math.PI / 2, 0);
+            satModel.add(frustum);
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load satellite model: ${error}`);
@@ -212,17 +235,53 @@ async function loadPlane(planeTex) {
     return new Promise((resolve, reject) => {
         new THREE.TextureLoader().load(planeTex, function (texture) {
             texture.colorSpace = THREE.SRGBColorSpace;
+            texture.anisotropy = 8;
             texture.wrapS = THREE.RepeatWrapping;
             texture.wrapT = THREE.RepeatWrapping;
             texture.repeat.x = 1;
             texture.repeat.y = 1;
             texture.needsUpdate = true;
             const planeGeo = new THREE.PlaneGeometry(1, 1);
-            const plane_mat = new THREE.MeshPhongMaterial({
-                map: texture,
+            const planeMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    uMap: { value: texture },
+                    // use the lower value of the colormap radiance image as a chroma key
+                    uKeyColor: { value: new THREE.Vector3(2 / 255, 10 / 255, 43 / 255) },
+                    uThreshold: { value: 0.1 }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform sampler2D uMap;
+                    uniform vec3 uKeyColor;
+                    uniform float uThreshold;
+                    varying vec2 vUv;
+
+                    void main() {
+                        vec4 color = texture2D(uMap, vUv);
+                        
+                        // Compute the distance from the key color
+                        float diff = distance(color.rgb, uKeyColor);
+
+                        // Make the color transparent if close to the key color
+                        if (diff < uThreshold) {
+                            discard;
+                        }
+
+                        gl_FragColor = color;
+                        #include <tonemapping_fragment>
+                        #include <colorspace_fragment>
+                    }
+                `,
+                transparent: true,
                 side: THREE.DoubleSide
             });
-            imagePlane = new THREE.Mesh(planeGeo, plane_mat);
+            imagePlane = new THREE.Mesh(planeGeo, planeMat);
             imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
             scene.add(imagePlane);
             resolve();
@@ -376,6 +435,7 @@ function positionPlane(phi, theta) {
     imagePlane.rotation.z = cloudModel.rotation.y;
     cloudModel.position.copy(planePosition.add(new THREE.Vector3(-0.5, 0, -0.5)));
     sky.position.copy(planePosition);
+    clipPlane.constant = satModel.position.x;
 }
 
 function initGUI() {
@@ -560,10 +620,12 @@ function initGUI() {
     folderMisc.add(propsMisc, 'satRotY', -Math.PI, Math.PI, 0.01).onChange(() => {
         satModel.rotation.y = propsMisc.satRotY;
     });
+    /*
     folderMisc.add(propsMisc, 'atmFalloff', 0.1, 5, 0.005).onChange(() => {
         const uniforms = atm.material.uniforms;
         uniforms['uAtmFalloff'].value = propsMisc.atmFalloff;
     });
+    */
     folderMisc.addColor(propsMisc, 'atmColor').onChange(() => {
         atm.material.uniforms.uDayColor.value.set(propsMisc.atmColor);
     });
