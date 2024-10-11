@@ -7,17 +7,17 @@ import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { NRRDLoader } from 'three/examples/jsm/loaders/NRRDLoader.js';
-import { Sky } from './sky.js';
 import cloudVertexShader from './shaders/clouds/cloudVertex.glsl';
 import cloudFragmentShader from './shaders/clouds/cloudFragment.glsl';
 import atmVertexShader from './shaders/atm/atmVertex.glsl';
 import atmFragmentShader from './shaders/atm/atmFragment.glsl';
-import { oscTriangle } from 'three/webgpu';
+import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
+import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
 let container, stats;
 let camera, controls, scene, renderer;
 let cloudModel, satModel, imagePlane, clipPlane, ground, atm;
-let sky, sun;
+let sky;
 
 const useGltf = true;
 const useBigModel = true;
@@ -38,6 +38,8 @@ if (useGltf) {
 }
 
 const satelliteFile = './CloudSat.glb';
+const starTexture = './starmap_2020_4k.avif';
+const planeTexture = './MISR_40m_radiance_nadir_2048x2048.png';
 
 console.log(`loading model: ${modelFile}`);
 console.log(`model dimension: ${modelDim}`);
@@ -48,7 +50,11 @@ const initSatScale = 0.04;
 const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
 
-await init();
+await init().then(() => {
+    renderer.setAnimationLoop(animate);
+    initGUI();
+});
+
 
 async function init() {
 
@@ -92,45 +98,34 @@ async function init() {
         await loadGLTF(modelFile).then(() => {
             fitCameraToObject(camera, cloudModel, initOffset);
             camera.lookAt(cloudModel);
-            renderer.setAnimationLoop(animate);
         });
     } else {
         await loadNRRD(modelFile).then(() => {
             fitCameraToObject(camera, cloudModel, initOffset);
             camera.lookAt(cloudModel);
-            renderer.setAnimationLoop(animate);
         });
     }
 
     await loadSatellite(satelliteFile);
-
-    //await initSky().then(() => {
-    //    initGUI();
-    //});
-
-    const textureLoader = new THREE.TextureLoader();
-    const planeGeo = new THREE.PlaneGeometry(1, 1);
-    textureLoader.load('./MISR_40m_radiance_nadir_2048x2048.png', function (texture) {
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.x = 1;
-        texture.repeat.y = 1;
-        texture.needsUpdate = true;
-        const plane_mat = new THREE.MeshPhongMaterial({
-            map: texture,
-            side: THREE.DoubleSide
-        });
-        imagePlane = new THREE.Mesh(planeGeo, plane_mat);
-        imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
-        scene.add(imagePlane);
-        initGUI();
-    });
+    await loadStars(starTexture);
+    await loadPlane(planeTexture);
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
     const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
-    const groundMat = new THREE.MeshPhongMaterial({
-        color: 0x083471
+    //const groundMat = new THREE.MeshPhongMaterial({
+    //    color: 0x083471
+    //});
+    const sunDir = new THREE.Vector3(-10, 10, 0);
+    const groundMat = new THREE.ShaderMaterial({
+        vertexShader: oceanVertexShader,
+        fragmentShader: oceanFragmentShader,
+        uniforms: {
+            uSunDirection: new THREE.Uniform(sunDir),
+            uAtmColor: new THREE.Uniform(new THREE.Color(0xffffff)),
+            uAmbientColor: new THREE.Uniform(new THREE.Color(0x0d2d63)),
+            uSpecularColor: new THREE.Uniform(new THREE.Color(0xffffff)),
+            uShininess: new THREE.Uniform(32.0)
+        }
     });
     const atmMat = new THREE.ShaderMaterial({
         vertexShader: atmVertexShader,
@@ -146,7 +141,6 @@ async function init() {
     atm = new THREE.Mesh(atmGeo, atmMat);
     scene.add(ground);
     scene.add(atm);
-    //ground.rotation.x = -Math.PI / 2.0;
     ground.position.copy(groundPosition);
     atm.position.copy(groundPosition);
 
@@ -167,8 +161,6 @@ async function loadGLTF(modelName) {
             cloudModel.position.x -= 0.5;
             cloudModel.position.z -= 0.5;
             cloudModel.scale.z *= -1.0;
-            //model.rotation.x = Math.PI;
-            //model.rotation.z = Math.PI;
             scene.add(cloudModel);
             resolve();
         }, undefined, function (error) {
@@ -189,6 +181,53 @@ async function loadSatellite(modelName) {
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load satellite model: ${error}`);
+            reject(error);
+        });
+    });
+}
+
+async function loadStars(starTex) {
+    return new Promise((resolve, reject) => {
+        new THREE.TextureLoader().load(starTex, function (texture) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+            const skyGeo = new THREE.SphereGeometry(1, 32, 32);
+            const skyMat = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.BackSide,
+                depthWrite: false
+            });
+            sky = new THREE.Mesh(skyGeo, skyMat);
+            sky.scale.setScalar(10);
+            scene.add(sky);
+            resolve();
+        }, undefined, function (error) {
+            console.error(`Failed to load sky texture: ${error}`);
+            reject(error);
+        });
+    });
+}
+
+async function loadPlane(planeTex) {
+    return new Promise((resolve, reject) => {
+        new THREE.TextureLoader().load(planeTex, function (texture) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.x = 1;
+            texture.repeat.y = 1;
+            texture.needsUpdate = true;
+            const planeGeo = new THREE.PlaneGeometry(1, 1);
+            const plane_mat = new THREE.MeshPhongMaterial({
+                map: texture,
+                side: THREE.DoubleSide
+            });
+            imagePlane = new THREE.Mesh(planeGeo, plane_mat);
+            imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
+            scene.add(imagePlane);
+            resolve();
+        }, undefined, function (error) {
+            console.error(`Failed to image plane texture: ${error}`);
             reject(error);
         });
     });
@@ -235,23 +274,6 @@ async function loadNRRD(modelName) {
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load point cloud data: ${error}`);
-            reject(error);
-        });
-    });
-}
-
-async function initSky() {
-    return new Promise((resolve, reject) => {
-        new THREE.TextureLoader().load('./starmap_2020_4k.avif', function (texture) {
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-            sky = new Sky(texture);
-            sky.scale.setScalar(450000);
-            scene.add(sky);
-            sun = new THREE.Vector3();
-            resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load sky: ${error}`);
             reject(error);
         });
     });
@@ -353,6 +375,7 @@ function positionPlane(phi, theta) {
     satModel.position.y += 0.75;
     imagePlane.rotation.z = cloudModel.rotation.y;
     cloudModel.position.copy(planePosition.add(new THREE.Vector3(-0.5, 0, -0.5)));
+    sky.position.copy(planePosition);
 }
 
 function initGUI() {
