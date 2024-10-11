@@ -152,7 +152,7 @@ async function init() {
 async function loadGLTF(modelName) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (gltf) {
-            clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), -9.2);
+            clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0.07);
             cloudModel = gltf.scene;
             cloudModel.traverse((node) => {
                 if (node instanceof THREE.Points) {
@@ -181,24 +181,26 @@ async function loadSatellite(modelName) {
             satModel.scale.set(initSatScale, initSatScale, initSatScale);
             scene.add(satModel);
 
-            const frustumHeight = satModel.position.y / initSatScale;  // Adjust as needed
-            const frustumRadius = 1.0 / initSatScale; // Adjust as needed
+            const frustumHeight = satModel.position.y / initSatScale;
+            const frustumRadius = 1.0 / initSatScale;
             const frustumGeo = new THREE.BufferGeometry();
+            // not sure why everything is off by 1 unit
             const vertices = new Float32Array([
-                0, 0, 0,
-                -frustumRadius / 2, -frustumHeight, 0,
-                frustumRadius / 2, -frustumHeight, 0
+                0, -1, 0,
+                -frustumRadius / 2 + 1, -frustumHeight, 0,
+                frustumRadius / 2 + 1, -frustumHeight, 0
             ]);
             frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
             frustumGeo.setIndex([0, 1, 2]);
             frustumGeo.computeVertexNormals();
             const frustumMaterial = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,   // Green color
+                color: 0x00ff00,
                 transparent: true,
-                opacity: 0.25,      // 25% opacity
+                opacity: 0.25,
                 side: THREE.DoubleSide
             });
             frustum = new THREE.Mesh(frustumGeo, frustumMaterial);
+            //frustum.position.set(0, -1, 0);
             frustum.rotation.set(0, Math.PI / 2, 0);
             satModel.add(frustum);
             resolve();
@@ -435,12 +437,11 @@ function positionPlane(phi, theta) {
     imagePlane.rotation.z = cloudModel.rotation.y;
     cloudModel.position.copy(planePosition.add(new THREE.Vector3(-0.5, 0, -0.5)));
     sky.position.copy(planePosition);
-    clipPlane.constant = satModel.position.x;
+    clipPlane.constant = imagePlane.position.x + 0.07;
 }
 
 function initGUI() {
     const gui = new GUI();
-
     const folderClip = gui.addFolder('Clip Plane');
     const propsClip = {
         get 'enabled'() {
@@ -474,7 +475,19 @@ function initGUI() {
             }
         },
         get 'planePosition'() {
-            return clipPlane.constant;
+            let imagePos;
+            switch (propsClip.axis) {
+                case 'X':
+                    imagePos = imagePlane.position.x;
+                    break;
+                case 'Y':
+                    imagePos = imagePlane.position.y;
+                    break;
+                case 'Z':
+                    imagePos = imagePlane.position.z;
+                    break;
+            }
+            return clipPlane.constant - imagePos;
         },
         set 'planePosition'(v) {
             let imagePos;
@@ -495,6 +508,7 @@ function initGUI() {
     folderClip.add(propsClip, 'enabled');
     folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
     folderClip.add(propsClip, 'planePosition', -1.0, 1.0, 0.01);
+
 
     /*
     const folderSky = gui.addFolder('Sky Parameters');
