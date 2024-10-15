@@ -178,8 +178,6 @@ async function loadSatellite(modelName) {
             satModel = glb.scene;
             satModel.position.y = 0.75;
             satModel.rotation.y = 0.15 * Math.PI;
-            satModel.scale.set(initSatScale, initSatScale, initSatScale);
-            scene.add(satModel);
 
             const frustumHeight = satModel.position.y / initSatScale;
             const frustumRadius = 1.0 / initSatScale;
@@ -203,6 +201,25 @@ async function loadSatellite(modelName) {
             //frustum.position.set(0, -1, 0);
             frustum.rotation.set(0, Math.PI / 2, 0);
             satModel.add(frustum);
+
+            const satModelClone1 = satModel.clone(true);
+            const satModelClone2 = satModel.clone(true);
+
+            // Set the positions of the clones relative to the original model
+            satModelClone1.position.set(30, 0, 0); // Position clone 1
+            satModelClone1.rotation.set(0, 0, -Math.PI / 6);
+            satModelClone1.children[1].scale.set(2, 2, 2);
+            satModelClone2.position.set(-30, 0, 0); // Position clone 2
+            satModelClone2.rotation.set(0, 0, Math.PI / 6);
+            satModelClone2.children[1].scale.set(2, 2, 2);
+
+            // Add the clones as children of the original satellite model
+            satModel.add(satModelClone1);
+            satModel.add(satModelClone2);
+
+            // Add the original satellite model (with its clones) to the scene
+            satModel.scale.set(initSatScale, initSatScale, initSatScale);
+            scene.add(satModel);
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load satellite model: ${error}`);
@@ -612,7 +629,7 @@ function initGUI() {
         atmFalloff: 0.1,
         atmColor: 0x00b5e2
     }
-    folderMisc.add(propsMisc, 'modelOffset', 1, 20, 0.01).onChange(() => {
+    folderMisc.add(propsMisc, 'modelOffset', 1, 20, 0.1).onChange(() => {
         fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
         controls.update();
     });
