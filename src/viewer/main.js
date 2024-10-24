@@ -111,11 +111,15 @@ async function init() {
         const numCopies = 2;
         const imagePlaneClone = imagePlane.clone(true);
         for (let x = -numCopies; x <= numCopies; x++) {
-            if (x === 0) continue;
-            const imPlaneClone = imagePlaneClone.clone(true);
-            imPlaneClone.position.x += x;
-            imPlaneClone.rotation.x = Math.PI;
-            imagePlane.add(imPlaneClone);
+            for (let y = -numCopies; y <= numCopies; y++) {
+                if (x === 0 && y === 0) continue; // Skip the original plane position
+
+                const imPlaneClone = imagePlaneClone.clone(true);
+                imPlaneClone.position.x += x;
+                imPlaneClone.position.y += y;
+                imPlaneClone.rotation.x = Math.PI;
+                imagePlane.add(imPlaneClone);
+            }
         }
     });
 
@@ -172,7 +176,7 @@ async function loadGLTF(modelName) {
             cloudModel.position.x -= 0.5;
             cloudModel.position.z -= 0.5;
             cloudModel.scale.z *= -1.0;
-            //scene.add(cloudModel);
+            scene.add(cloudModel);
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load point cloud model: ${error}`);
@@ -483,7 +487,7 @@ function initGUI() {
             renderer.localClippingEnabled = v;
         },
         get 'axis'() {
-            if (clipPlane.normal.x === -0.707) {
+            if (clipPlane.normal.x === -1) {
                 return 'X';
             }
             else if (clipPlane.normal.y === -1) {
@@ -637,7 +641,7 @@ function initGUI() {
     const folderMisc = gui.addFolder('Misc Parameters');
     const propsMisc = {
         modelOffset: initOffset,
-        modelPhi: -0.1,
+        modelPhi: -0.15,
         modelTheta: 0.4,
         satScale: initSatScale,
         satRotY: 0.2 * Math.PI,
