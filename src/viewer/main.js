@@ -17,7 +17,7 @@ import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 let container, stats;
 let camera, controls, scene, renderer;
 let cloudModel, satModel, imagePlane, clipPlane, ground, atm, frustum;
-let sky;
+let sky, dirLight, imPlane1;
 
 const useGltf = true;
 const useBigModel = true;
@@ -83,13 +83,12 @@ async function init() {
     scene.add(ambientLight);
     const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x083471, 2);
     scene.add(hemisphereLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 10);
-    dirLight.position.set(-10, 10, 0);
-    dirLight.rotation.set(0, 0, 3 * Math.PI / 4);
+    dirLight = new THREE.DirectionalLight(0xffffff, 10);
+    dirLight.position.set(0, 1.5, 0);
     scene.add(dirLight);
 
-    stats = new Stats();
-    container.appendChild(stats.dom);
+    //stats = new Stats();
+    //container.appendChild(stats.dom);
 
     controls = new OrbitControls(camera, renderer.domElement);
 
@@ -108,7 +107,17 @@ async function init() {
 
     await loadSatellite(satelliteFile);
     await loadStars(starTexture);
-    await loadPlane(planeTexture);
+    await loadPlane(planeTexture).then(() => {
+        const numCopies = 2;
+        const imagePlaneClone = imagePlane.clone(true);
+        for (let x = -numCopies; x <= numCopies; x++) {
+            if (x === 0) continue;
+            const imPlaneClone = imagePlaneClone.clone(true);
+            imPlaneClone.position.x += x;
+            imPlaneClone.rotation.x = Math.PI;
+            imagePlane.add(imPlaneClone);
+        }
+    });
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
     //const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
@@ -163,7 +172,7 @@ async function loadGLTF(modelName) {
             cloudModel.position.x -= 0.5;
             cloudModel.position.z -= 0.5;
             cloudModel.scale.z *= -1.0;
-            scene.add(cloudModel);
+            //scene.add(cloudModel);
             resolve();
         }, undefined, function (error) {
             console.error(`Failed to load point cloud model: ${error}`);
@@ -176,6 +185,7 @@ async function loadSatellite(modelName) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (glb) {
             satModel = glb.scene;
+            // works out to 18.75 when accounting for initSatScale
             satModel.position.y = 0.75;
             satModel.rotation.y = 0.15 * Math.PI;
 
@@ -206,12 +216,14 @@ async function loadSatellite(modelName) {
             const satModelClone2 = satModel.clone(true);
 
             // Set the positions of the clones relative to the original model
-            satModelClone1.position.set(30, 0, 0); // Position clone 1
-            satModelClone1.rotation.set(0, 0, -Math.PI / 6);
-            satModelClone1.children[1].scale.set(2, 2, 2);
-            satModelClone2.position.set(-30, 0, 0); // Position clone 2
-            satModelClone2.rotation.set(0, 0, Math.PI / 6);
-            satModelClone2.children[1].scale.set(2, 2, 2);
+            // 1.45 is probably not exact but I can't do math
+            satModelClone1.children[1].scale.set(1.45, 2, 1);
+            satModelClone1.children[1].rotation.set(Math.PI / 2, 0, Math.PI / 2);
+            satModelClone1.position.set(18.75, 0, 0); // Position clone 1, use 18.75 * tan(z_rot) using z rotation below
+            satModelClone1.rotation.set(0, Math.PI - 0.0025, -Math.PI / 4);
+            satModelClone2.children[1].scale.set(1.45, 2, 1);
+            satModelClone2.position.set(-18.75, 0, 0); // Position clone 2
+            satModelClone2.rotation.set(0, 0.0025, Math.PI / 4);
 
             // Add the clones as children of the original satellite model
             satModel.add(satModelClone1);
@@ -455,6 +467,9 @@ function positionPlane(phi, theta) {
     cloudModel.position.copy(planePosition.add(new THREE.Vector3(-0.5, 0, -0.5)));
     sky.position.copy(planePosition);
     clipPlane.constant = imagePlane.position.x + 0.07;
+    dirLight.position.set(satModel.position.x - 0.5, satModel.position.y + 0.5, satModel.position.z - 0.5);
+    dirLight.target = satModel;
+
 }
 
 function initGUI() {
@@ -468,7 +483,7 @@ function initGUI() {
             renderer.localClippingEnabled = v;
         },
         get 'axis'() {
-            if (clipPlane.normal.x === -1) {
+            if (clipPlane.normal.x === -0.707) {
                 return 'X';
             }
             else if (clipPlane.normal.y === -1) {
@@ -709,7 +724,7 @@ function animate() {
     }
     controls.update();
 
-    stats.begin();
+    //stats.begin();
     renderer.render(scene, camera);
-    stats.end();
+    //stats.end();
 }
