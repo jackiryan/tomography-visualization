@@ -7,9 +7,9 @@ import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
 let container, camera, controls, scene, renderer;
-let cloudModel, satModel, imagePlane, ground, frustum;
+let cloudGroup, satModel, imagePlane, ground;
 let clipPlane, clipPlaneAxis;
-let sky, dirLight, orbitTrack;
+let sky, keyLight, fillLight, orbitTrack;
 
 const useGltf = true;
 const useBigModel = true;
@@ -30,22 +30,33 @@ if (useGltf) {
 }
 
 const satelliteFile = './CloudSat.glb';
-const starTexture = './starmap_2020_4k.avif';
+const starTexture = './starmap_2020_8k.avif';
 const planeTexture = './MISR_40m_radiance_nadir_2048x2048.png';
 
 console.log(`loading model: ${modelFile}`);
 console.log(`model dimension: ${modelDim}`);
 
 const defaultPointSize = 2.0;
-const initOffset = 3.5;
-const initSatScale = 0.04;
+const initOffset = 1.25;
 const initClipPos = -1.02;
 const initClipDir = new THREE.Vector3(-1, 0, 0);
 const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
 
+const renderParms = {
+    fps: 10,
+    interval: 100,
+    lastTime: 0
+};
+
+const initSatParms = {
+    scale: 0.02,
+    height: 0.4,
+    spacing: 0.6
+};
+
 await init().then(() => {
-    renderer.setAnimationLoop(animate);
+    requestAnimationFrame(animate);
     initGUI();
 });
 
@@ -74,6 +85,10 @@ async function init() {
     scene.add(ambientLight);
     const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x083471, 2);
     scene.add(hemisphereLight);
+    keyLight = new THREE.DirectionalLight(0xffffff, 10);
+    scene.add(keyLight);
+    fillLight = new THREE.DirectionalLight(0xffffff, 10);
+    scene.add(fillLight);
 
     controls = new OrbitControls(camera, renderer.domElement);
 
@@ -88,7 +103,7 @@ async function init() {
         const originalPlane = imagePlane.clone();
         originalPlane.children = [];
 
-        for (let x = -numCopies; x <= numCopies + 1; x++) {
+        for (let x = -numCopies; x <= numCopies; x++) {
             if (x === 0) continue; // Skip the original plane position
 
             const imPlaneClone = originalPlane.clone();
@@ -120,6 +135,7 @@ async function init() {
         console.log(clipPlaneAxis);
     });
     await loadSatellite(satelliteFile);
+    await loadStars(starTexture);
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
     const sunDir = new THREE.Vector3(1, 1, 0).normalize();
@@ -138,43 +154,86 @@ async function init() {
     scene.add(ground);
     ground.position.copy(groundPosition);
 
+    orbitTrack = createCircle(groundSize + initSatParms.height, 1024, 0xffffff);
+    scene.add(orbitTrack);
+    orbitTrack.position.copy(groundPosition);
+
     window.addEventListener('resize', onWindowResize, false);
 }
 
 async function loadGLTF(modelName) {
     return new Promise((resolve, reject) => {
-        new GLTFLoader().load(modelName, function (gltf) {
-            clipPlane = new THREE.Plane(initClipDir, initClipPos);
-            cloudModel = gltf.scene;
-            cloudModel.traverse((node) => {
-                if (node instanceof THREE.Points) {
-                    node.material = createPointCloudMaterial();
-                }
-            });
-            // Offset vector to shift the origin by -0.5 in X and Z axes
-            const offset = new THREE.Vector3(-0.5 * modelDim, 0, 0.5 * modelDim);
+        new GLTFLoader().load(
+            modelName,
+            function (gltf) {
+                cloudGroup = new THREE.Group();
+                clipPlane = new THREE.Plane(initClipDir, initClipPos);
+                const cloudModel = gltf.scene;
 
-            // Traverse the model and adjust geometries
-            cloudModel.traverse((node) => {
-                if (node instanceof THREE.Mesh || node instanceof THREE.Points) {
-                    // Translate the geometry to shift the origin
-                    node.geometry.translate(offset.x, offset.y, offset.z);
-
-                    // If needed, replace the material for Points nodes
+                // First traversal to replace materials for Points nodes
+                cloudModel.traverse((node) => {
                     if (node instanceof THREE.Points) {
                         node.material = createPointCloudMaterial();
                     }
-                }
-            });
+                });
 
-            cloudModel.scale.set(1 / modelDim, 1 / modelDim, 1 / modelDim);
-            scene.add(cloudModel);
-            resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load point cloud model: ${error}`);
-            reject(error);
-        });
+                // Offset vector to shift the origin by -0.5 in X and Z axes
+                const offset = new THREE.Vector3(-0.5 * modelDim, 0, 0.5 * modelDim);
+
+                // Traverse the model and adjust geometries
+                cloudModel.traverse((node) => {
+                    if (node instanceof THREE.Mesh || node instanceof THREE.Points) {
+                        // Translate the geometry to shift the origin
+                        node.geometry.translate(offset.x, offset.y, offset.z);
+                    }
+                });
+
+                // Apply scaling to the model
+                cloudModel.scale.set(1 / modelDim, 1 / modelDim, 1 / modelDim);
+
+                // Add the original model to the scene
+                cloudGroup.add(cloudModel);
+
+                // Create the clone and share geometries and materials
+                const cloudModelClone = cloneModelSharingGeometryAndMaterials(cloudModel);
+
+                // Offset the clone by -1 * modelDim in X direction (after scaling, this is -1)
+                cloudModelClone.position.x = -1;
+
+                // Add the clone to the scene
+                cloudGroup.add(cloudModelClone);
+                scene.add(cloudGroup);
+
+                resolve();
+            },
+            undefined,
+            function (error) {
+                console.error(`Failed to load point cloud model: ${error}`);
+                reject(error);
+            }
+        );
     });
+}
+
+// Helper function to clone the model and share geometries and materials
+function cloneModelSharingGeometryAndMaterials(original) {
+    const clone = original.clone();
+
+    function traverseAndShare(originalNode, clonedNode) {
+        if (originalNode.isMesh || originalNode.isPoints) {
+            clonedNode.geometry = originalNode.geometry; // Share geometry
+            clonedNode.material = originalNode.material; // Share material
+        }
+
+        // Recursively traverse children
+        for (let i = 0; i < originalNode.children.length; i++) {
+            traverseAndShare(originalNode.children[i], clonedNode.children[i]);
+        }
+    }
+
+    traverseAndShare(original, clone);
+
+    return clone;
 }
 
 function createPointCloudMaterial() {
@@ -337,52 +396,66 @@ async function loadSatellite(modelName) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (glb) {
             satModel = glb.scene;
-            // works out to 18.75 when accounting for initSatScale
-            satModel.position.y = 0.75;
-            satModel.rotation.y = 0.15 * Math.PI;
+            satModel.position.y = initSatParms.height;
 
-            const frustumHeight = satModel.position.y / initSatScale;
-            const frustumRadius = 1.0 / initSatScale;
-            const frustumGeo = new THREE.BufferGeometry();
-            // not sure why everything is off by 1 unit
-            const vertices = new Float32Array([
-                0, -1, 0,
-                -frustumRadius / 2 + 1, -frustumHeight, 0,
-                frustumRadius / 2 + 1, -frustumHeight, 0
-            ]);
-            frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-            frustumGeo.setIndex([0, 1, 2]);
-            frustumGeo.computeVertexNormals();
-            const frustumMaterial = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                transparent: true,
-                opacity: 0.25,
-                side: THREE.DoubleSide
-            });
-            frustum = new THREE.Mesh(frustumGeo, frustumMaterial);
-            //frustum.position.set(0, -1, 0);
-            frustum.rotation.set(0, Math.PI / 2, 0);
-            satModel.add(frustum);
+            const frustumHeight = initSatParms.height / initSatParms.scale;
+            const frustumRadius = 1.0 / initSatParms.scale;
 
-            const satModelClone1 = satModel.clone(true);
-            const satModelClone2 = satModel.clone(true);
+            const satSpacing = initSatParms.spacing / initSatParms.scale;
 
-            // Set the positions of the clones relative to the original model
-            // 1.45 is probably not exact but I can't do math
-            satModelClone1.children[1].scale.set(1.45, 2, 1);
-            satModelClone1.children[1].rotation.set(Math.PI / 2, 0, Math.PI / 2);
-            satModelClone1.position.set(18.75, 0, 0); // Position clone 1, use 18.75 * tan(z_rot) using z rotation below
-            satModelClone1.rotation.set(0, Math.PI - 0.0025, -Math.PI / 4);
-            satModelClone2.children[1].scale.set(1.45, 2, 1);
-            satModelClone2.position.set(-18.75, 0, 0); // Position clone 2
-            satModelClone2.rotation.set(0, 0.0025, Math.PI / 4);
+            const createFrustum = (frustumRadius, frustumHeight, offset) => {
+                const frustumGeo = new THREE.BufferGeometry();
+                const vertices = new Float32Array([
+                    0, -1, 0,
+                    -frustumRadius / 2, -frustumHeight, -offset,
+                    frustumRadius / 2, -frustumHeight, -offset,
+                ]);
+                frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                frustumGeo.setIndex([0, 1, 2]);
+                frustumGeo.computeVertexNormals();
+
+                const frustumMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x00ff00,
+                    transparent: true,
+                    opacity: 0.25,
+                    side: THREE.DoubleSide,
+                });
+
+                const frustumMesh = new THREE.Mesh(frustumGeo, frustumMaterial);
+                frustumMesh.rotation.set(0, Math.PI / 2, 0);
+                frustumMesh.name = 'frustum'; // Assign a name for easy identification
+                return frustumMesh;
+            };
+
+
+            const originalFrustum = createFrustum(frustumRadius, frustumHeight, 0);
+            satModel.add(originalFrustum);
+
+            const satModelClone1 = satModel.clone();
+            const satModelClone2 = satModel.clone();
+
+            satModelClone1.remove(satModelClone1.getObjectByName('frustum'));
+            satModelClone2.remove(satModelClone2.getObjectByName('frustum'));
+            const frustumClone1 = createFrustum(frustumRadius, frustumHeight, satSpacing);
+            satModelClone1.add(frustumClone1);
+            const frustumClone2 = createFrustum(frustumRadius, frustumHeight, -satSpacing);
+            satModelClone2.add(frustumClone2);
+
+            // slop factors are added to account for the fact that I am not moving
+            // along the track exactly. TO DO: fix this when adding animations.
+            satModelClone1.children[0].position.set(satSpacing, 0.2, 0.2);
+            satModelClone1.children[0].rotation.set(0, Math.PI, -Math.PI / 4);
+            satModelClone2.children[0].position.set(-satSpacing, -0.6, -0.2);
+            satModelClone2.children[0].rotation.set(0, 0, Math.PI / 4);
+            satModelClone1.children[1].position.set(satSpacing, -0.4, 0);
+            satModelClone2.children[1].position.set(-satSpacing, -0.4, 0);
 
             // Add the clones as children of the original satellite model
             satModel.add(satModelClone1);
             satModel.add(satModelClone2);
 
             // Add the original satellite model (with its clones) to the scene
-            satModel.scale.set(initSatScale, initSatScale, initSatScale);
+            satModel.scale.set(initSatParms.scale, initSatParms.scale, initSatParms.scale);
             scene.add(satModel);
             resolve();
         }, undefined, function (error) {
@@ -390,6 +463,60 @@ async function loadSatellite(modelName) {
             reject(error);
         });
     });
+}
+
+async function loadStars(starTex) {
+    return new Promise((resolve, reject) => {
+        new THREE.TextureLoader().load(starTex, function (texture) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+            const skyGeo = new THREE.SphereGeometry(1, 32, 32);
+            const skyMat = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.BackSide,
+                depthWrite: false
+            });
+            sky = new THREE.Mesh(skyGeo, skyMat);
+            sky.scale.setScalar(20);
+            // arbitrary rotations to put a well-populated part of the sky in the background
+            sky.rotation.y = 3 * Math.PI / 4;
+            sky.rotation.z = - Math.PI / 4;
+            scene.add(sky);
+            resolve();
+        }, undefined, function (error) {
+            console.error(`Failed to load sky texture: ${error}`);
+            reject(error);
+        });
+    });
+}
+
+function createCircle(radius, segments, color) {
+    // Create an array to hold the circle's vertices
+    const positions = [];
+
+    // Generate the circle's points
+    for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const x = radius * Math.cos(theta);
+        const y = radius * Math.sin(theta);
+        const z = 0; // Circle lies in the XY plane
+        positions.push(x, y, z);
+    }
+
+    // Create a BufferGeometry and set its position attribute
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+    // Create a material for the line
+    const material = new THREE.LineBasicMaterial({ color });
+
+    // Create the LineLoop (connects the points in a loop)
+    const circle = new THREE.LineLoop(geometry, material);
+
+    // Rotate the circle to wrap around the sphere appropriately
+    circle.rotation.x = Math.PI / 2; // Adjust as needed
+
+    return circle;
 }
 
 function getPosition(lat, lon) {
@@ -425,11 +552,10 @@ function positionScene(lat, lon, satHeight, rotAngle) {
 
 
     const rotationQuaternion = new THREE.Quaternion().setFromAxisAngle(normalDir, THREE.MathUtils.degToRad(rotAngle));
-    //imagePlane.quaternion.multiply(rotationQuaternion);
 
-    cloudModel.position.copy(planePosition);
-    cloudModel.quaternion.setFromUnitVectors(modelNormal, normalDir);
-    cloudModel.quaternion.multiply(rotationQuaternion);
+    cloudGroup.position.copy(planePosition);
+    cloudGroup.quaternion.setFromUnitVectors(modelNormal, normalDir);
+    cloudGroup.quaternion.multiply(rotationQuaternion);
 
     const satDisp = normal.clone().multiplyScalar(satHeight);
     satModel.position.copy(planePosition).add(satDisp);
@@ -442,6 +568,11 @@ function positionScene(lat, lon, satHeight, rotAngle) {
         imagePlane.arrowHelper.setDirection(normal.clone().applyQuaternion(rotationQuaternion));
     }
 
+    sky.position.copy(planePosition);
+
+    const trackQuat = new THREE.Quaternion().setFromUnitVectors(modelNormal, normalDir);
+    orbitTrack.quaternion.copy(trackQuat);
+
     controls.target.copy(imagePlane.position);
     controls.update();
 }
@@ -453,38 +584,38 @@ function initGUI() {
     const folderScene = gui.addFolder('Scene Positioning');
     const propsScene = {
         cameraDist: initOffset,
-        cameraRotX: -37,
-        cameraRotY: -55,
+        cameraRotX: -38,
+        cameraRotY: -66,
         modelLat: 81,
         modelLon: -120,
         modelRot: 4.0,
-        satHeight: 0.6
+        satHeight: initSatParms.height
     };
     function getCameraRotation() {
         const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
         const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
         return new THREE.Euler(crX, crY, 0, 'XYZ');
     }
-    folderScene.add(propsScene, 'cameraDist', 0.1, 10, 0.1).onChange(() => {
-        fitCameraToObject(camera, cloudModel, propsScene.cameraDist, getCameraRotation());
+    folderScene.add(propsScene, 'cameraDist', 0.1, 10, 0.05).onChange(() => {
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
     folderScene.add(propsScene, 'cameraRotX', -180, 180, 1).onChange(() => {
-        fitCameraToObject(camera, cloudModel, propsScene.cameraDist, getCameraRotation());
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
     folderScene.add(propsScene, 'cameraRotY', -180, 180, 1).onChange(() => {
-        fitCameraToObject(camera, cloudModel, propsScene.cameraDist, getCameraRotation());
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
     folderScene.add(propsScene, 'modelLat', -90, 90, 1).onChange(() => {
         positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-        fitCameraToObject(camera, cloudModel, propsScene.cameraDist, getCameraRotation());
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
     folderScene.add(propsScene, 'modelLon', -180, 180, 1).onChange(() => {
         positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-        fitCameraToObject(camera, cloudModel, propsScene.cameraDist, getCameraRotation());
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
     folderScene.add(propsScene, 'modelRot', -45, 45, 0.1).onChange(() => {
@@ -527,20 +658,20 @@ function initGUI() {
                     clipPlaneAxis.set(0, 0, -1);
                     break;
             }
-            const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudModel.quaternion).normalize();
+            const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
             clipPlane.normal.copy(normalDir);
         },
         get 'planePosition'() {
             let imagePos;
             switch (propsClip.axis) {
                 case 'X':
-                    imagePos = cloudModel.position.x;
+                    imagePos = cloudGroup.position.x;
                     break;
                 case 'Y':
-                    imagePos = cloudModel.position.y;
+                    imagePos = cloudGroup.position.y;
                     break;
                 case 'Z':
-                    imagePos = cloudModel.position.z;
+                    imagePos = cloudGroup.position.z;
                     break;
             }
             return clipPlane.constant - imagePos;
@@ -549,13 +680,13 @@ function initGUI() {
             let imagePos;
             switch (propsClip.axis) {
                 case 'X':
-                    imagePos = cloudModel.position.x;
+                    imagePos = cloudGroup.position.x;
                     break;
                 case 'Y':
-                    imagePos = cloudModel.position.y;
+                    imagePos = cloudGroup.position.y;
                     break;
                 case 'Z':
-                    imagePos = cloudModel.position.z;
+                    imagePos = cloudGroup.position.z;
                     break;
             }
             clipPlane.constant = imagePos + v;
@@ -573,26 +704,75 @@ function initGUI() {
         };
 
         function cloudsChanged() {
-            cloudModel.traverse((node) => {
-                if (node instanceof THREE.Points) {
-                    const uniforms = node.material.uniforms;
-                    uniforms['uScale'].value = propsCloud.scale;
-                    const { position, normal } = getPosition(propsScene.modelLat, propsScene.modelLon);
-                    const cloudDisp = normal.clone().multiplyScalar(propsCloud.posY);
-                    cloudModel.position.copy(position).add(cloudDisp);
-                }
-            });
+            for (let model of cloudGroup.children) {
+                model.traverse((node) => {
+                    if (node instanceof THREE.Points) {
+                        const uniforms = node.material.uniforms;
+                        uniforms['uScale'].value = propsCloud.scale;
+                    }
+                });
+            }
+            const { position, normal } = getPosition(propsScene.modelLat, propsScene.modelLon);
+            const cloudDisp = normal.clone().multiplyScalar(propsCloud.posY);
+            cloudGroup.position.copy(position).add(cloudDisp);
+
         }
         folderCloud.add(propsCloud, 'scale', 0.1, 10, 0.1).onChange(cloudsChanged);
         folderCloud.add(propsCloud, 'posY', -0.2, 0.2, 0.01).onChange(cloudsChanged);
         cloudsChanged();
     }
 
+    const folderLight = gui.addFolder('Light Position');
+    const propsLight = {
+        posX: 200.0,
+        posY: 200.0,
+        posZ: -185.0,
+        fillX: -30.0,
+        fillY: 0.0,
+        fillZ: -35.0
+    };
+    function moveLight(posX, posY, posZ) {
+        keyLight.position.set(
+            satModel.position.x + posX,
+            satModel.position.y + posY,
+            satModel.position.z + posZ);
+        keyLight.target = satModel;
+        fillLight.position.set(
+            satModel.position.x + propsLight.fillX,
+            satModel.position.y + propsLight.fillY,
+            satModel.position.z + propsLight.fillZ);
+        fillLight.target = satModel;
+    }
+    folderLight.add(propsLight, 'posX', 0, 200, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'posY', 200, 300, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'posZ', -300, 0, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'fillX', -200, 200, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'fillY', -10, 10, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'fillZ', -50, 50, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+
+    gui.add(renderParms, 'fps', 10, 60, 1).onChange(() => {
+        renderParms.interval = 1000 / renderParms.fps;
+    });
+
     positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-    const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudModel.quaternion).normalize();
+    moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    console.log(satModel.quaternion);
+    const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
     clipPlane.normal.copy(normalDir);
-    clipPlane.constant = cloudModel.position.x + initClipPos;
-    fitCameraToObject(camera, cloudModel, propsScene.cameraDist, getCameraRotation());
+    clipPlane.constant = cloudGroup.position.x + initClipPos;
+    fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
     controls.update();
 }
 
@@ -628,8 +808,16 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-function animate() {
+function animate(time) {
     controls.update();
 
-    renderer.render(scene, camera);
+    const delta = time - renderParms.lastTime;
+
+    // Only render if enough time has passed
+    if (delta > renderParms.interval) {
+        renderParms.lastTime = time;
+        renderer.render(scene, camera); // Render the scene
+    }
+
+    requestAnimationFrame(animate);
 }
