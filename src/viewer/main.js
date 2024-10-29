@@ -17,7 +17,7 @@ import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 let container, stats;
 let camera, controls, scene, renderer;
 let cloudModel, satModel, imagePlane, clipPlane, ground, atm, frustum;
-let sky, dirLight, imPlane1;
+let sky, dirLight, orbitTrack;
 
 const useGltf = true;
 const useBigModel = true;
@@ -111,15 +111,12 @@ async function init() {
         const numCopies = 2;
         const imagePlaneClone = imagePlane.clone(true);
         for (let x = -numCopies; x <= numCopies; x++) {
-            for (let y = -numCopies; y <= numCopies; y++) {
-                if (x === 0 && y === 0) continue; // Skip the original plane position
+            if (x === 0) continue; // Skip the original plane position
 
-                const imPlaneClone = imagePlaneClone.clone(true);
-                imPlaneClone.position.x += x;
-                imPlaneClone.position.y += y;
-                imPlaneClone.rotation.x = Math.PI;
-                imagePlane.add(imPlaneClone);
-            }
+            const imPlaneClone = imagePlaneClone.clone(true);
+            imPlaneClone.position.x += x;
+            imPlaneClone.rotation.x = Math.PI;
+            imagePlane.add(imPlaneClone);
         }
     });
 
@@ -159,6 +156,10 @@ async function init() {
     ground.position.copy(groundPosition);
     //atm.position.copy(groundPosition);
 
+    orbitTrack = createCircle(groundSize + satModel.position.length(), 1024, 0xffffff);
+    scene.add(orbitTrack);
+    orbitTrack.position.copy(groundPosition);
+
     window.addEventListener('resize', onWindowResize, false);
 }
 
@@ -183,6 +184,129 @@ async function loadGLTF(modelName) {
             reject(error);
         });
     });
+}
+
+async function loadNRRD(modelName) {
+    return new Promise((resolve, reject) => {
+        new NRRDLoader().load(modelName, async function (volume) {
+            clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
+
+            const texture = new THREE.Data3DTexture(volume.data, volume.xLength, volume.yLength, volume.zLength);
+            texture.format = THREE.RedFormat;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.needsUpdate = true;
+
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.RawShaderMaterial({
+                glslVersion: THREE.GLSL3,
+                uniforms: {
+                    uBase: { value: new THREE.Color(0x798aa0) },
+                    uMap: { value: texture },
+                    uCameraPos: { value: new THREE.Vector3() },
+                    uThreshold: { value: 0.01 },
+                    uOpacity: { value: 1.0 },
+                    uRange: { value: 0.0 },
+                    uSteps: { value: 200 },
+                    uFrame: { value: 0 }
+                },
+                vertexShader: cloudVertexShader,
+                fragmentShader: cloudFragmentShader,
+                side: THREE.BackSide,
+                transparent: true,
+                clipping: true,
+                clippingPlanes: [clipPlane]
+            });
+
+            cloudModel = new THREE.Mesh(geometry, material);
+            cloudModel.position.set(0, 0.6, 0);
+            //cloudModel.position.set(0.375, 0.13, 0.375);
+            //cloudModel.rotation.set(-Math.PI / 2.0, 0, 0);
+            //cloudModel.scale.set(0.25, 0.25, 0.25);
+            scene.add(cloudModel);
+            resolve();
+        }, undefined, function (error) {
+            console.error(`Failed to load point cloud data: ${error}`);
+            reject(error);
+        });
+    });
+}
+
+function createPointCloudMaterial() {
+    const vertexShader = `
+        #if NUM_CLIPPING_PLANES > 0 && ! defined(PHYSICAL) && ! defined(PHONG)
+	        out vec3 vViewPosition;
+        #endif
+
+        uniform float uScale;
+        
+        void main() {
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            // increasing the numerator increases the size of the points
+            gl_PointSize = uScale / -mvPosition.z;
+            gl_Position = projectionMatrix * mvPosition;
+            #if NUM_CLIPPING_PLANES > 0 && ! defined(PHYSICAL) && ! defined(PHONG)
+                vViewPosition = -mvPosition.xyz;
+            #endif
+        }
+    `;
+
+    const fragmentShader = `
+        #if NUM_CLIPPING_PLANES > 0
+
+            #if ! defined(PHYSICAL) && ! defined(PHONG)
+                in vec3 vViewPosition;
+            #endif
+
+            uniform vec4 clippingPlanes[ NUM_CLIPPING_PLANES ];
+
+        #endif
+
+        out vec4 color;
+
+        void main() {
+            #if NUM_CLIPPING_PLANES > 0
+                #pragma unroll_loop_start
+                for (int i = 0; i < UNION_CLIPPING_PLANES; ++i) {
+                    vec4 plane = clippingPlanes[i];
+                    if (dot(vViewPosition, plane.xyz) > plane.w) {
+                        discard;
+                    }
+                }
+                #pragma unroll_loop_end
+                
+                #if UNION_CLIPPING_PLANES < NUM_CLIPPING_PLANES
+                    bool clipped = true;
+                    #pragma unroll_loop_start
+                    for (int i = UNION_CLIPPING_PLANES; i < NUM_CLIPPING_PLANES; ++ i) {
+                        vec4 plane = clippingPlanes[ i ];
+                        clipped = (dot(vViewPosition, plane.xyz) > plane.w) && clipped;
+                    }
+                    #pragma unroll_loop_end
+
+                    if (clipped) {
+                        discard;
+                    }
+                #endif
+            #endif
+
+            vec4 diffuseColor = vec4(1.0, 1.0, 1.0, 1.0);
+            color = diffuseColor;
+        }
+    `;
+
+    const material = new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        uniforms: {
+            'uScale': { value: defaultPointSize }
+        },
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        clipping: true,
+        clippingPlanes: [clipPlane]
+    });
+
+    return material;
 }
 
 async function loadSatellite(modelName) {
@@ -327,127 +451,33 @@ async function loadPlane(planeTex) {
     });
 }
 
-async function loadNRRD(modelName) {
-    return new Promise((resolve, reject) => {
-        new NRRDLoader().load(modelName, async function (volume) {
-            clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
+function createCircle(radius, segments, color) {
+    // Create an array to hold the circle's vertices
+    const positions = [];
 
-            const texture = new THREE.Data3DTexture(volume.data, volume.xLength, volume.yLength, volume.zLength);
-            texture.format = THREE.RedFormat;
-            texture.minFilter = THREE.LinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-            texture.needsUpdate = true;
+    // Generate the circle's points
+    for (let i = 0; i <= segments; i++) {
+        const theta = (i / segments) * Math.PI * 2;
+        const x = radius * Math.cos(theta);
+        const y = radius * Math.sin(theta);
+        const z = 0; // Circle lies in the XY plane
+        positions.push(x, y, z);
+    }
 
-            const geometry = new THREE.BoxGeometry(1, 1, 1);
-            const material = new THREE.RawShaderMaterial({
-                glslVersion: THREE.GLSL3,
-                uniforms: {
-                    uBase: { value: new THREE.Color(0x798aa0) },
-                    uMap: { value: texture },
-                    uCameraPos: { value: new THREE.Vector3() },
-                    uThreshold: { value: 0.01 },
-                    uOpacity: { value: 1.0 },
-                    uRange: { value: 0.0 },
-                    uSteps: { value: 200 },
-                    uFrame: { value: 0 }
-                },
-                vertexShader: cloudVertexShader,
-                fragmentShader: cloudFragmentShader,
-                side: THREE.BackSide,
-                transparent: true,
-                clipping: true,
-                clippingPlanes: [clipPlane]
-            });
+    // Create a BufferGeometry and set its position attribute
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
-            cloudModel = new THREE.Mesh(geometry, material);
-            cloudModel.position.set(0, 0.6, 0);
-            //cloudModel.position.set(0.375, 0.13, 0.375);
-            //cloudModel.rotation.set(-Math.PI / 2.0, 0, 0);
-            //cloudModel.scale.set(0.25, 0.25, 0.25);
-            scene.add(cloudModel);
-            resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load point cloud data: ${error}`);
-            reject(error);
-        });
-    });
-}
+    // Create a material for the line
+    const material = new THREE.LineBasicMaterial({ color });
 
-function createPointCloudMaterial() {
-    const vertexShader = `
-        #if NUM_CLIPPING_PLANES > 0 && ! defined(PHYSICAL) && ! defined(PHONG)
-	        out vec3 vViewPosition;
-        #endif
+    // Create the LineLoop (connects the points in a loop)
+    const circle = new THREE.LineLoop(geometry, material);
 
-        uniform float uScale;
-        
-        void main() {
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            // increasing the numerator increases the size of the points
-            gl_PointSize = uScale / -mvPosition.z;
-            gl_Position = projectionMatrix * mvPosition;
-            #if NUM_CLIPPING_PLANES > 0 && ! defined(PHYSICAL) && ! defined(PHONG)
-                vViewPosition = -mvPosition.xyz;
-            #endif
-        }
-    `;
+    // Rotate the circle to wrap around the sphere appropriately
+    circle.rotation.x = Math.PI / 2; // Adjust as needed
 
-    const fragmentShader = `
-        #if NUM_CLIPPING_PLANES > 0
-
-            #if ! defined(PHYSICAL) && ! defined(PHONG)
-                in vec3 vViewPosition;
-            #endif
-
-            uniform vec4 clippingPlanes[ NUM_CLIPPING_PLANES ];
-
-        #endif
-
-        out vec4 color;
-
-        void main() {
-            #if NUM_CLIPPING_PLANES > 0
-                #pragma unroll_loop_start
-                for (int i = 0; i < UNION_CLIPPING_PLANES; ++i) {
-                    vec4 plane = clippingPlanes[i];
-                    if (dot(vViewPosition, plane.xyz) > plane.w) {
-                        discard;
-                    }
-                }
-                #pragma unroll_loop_end
-                
-                #if UNION_CLIPPING_PLANES < NUM_CLIPPING_PLANES
-                    bool clipped = true;
-                    #pragma unroll_loop_start
-                    for (int i = UNION_CLIPPING_PLANES; i < NUM_CLIPPING_PLANES; ++ i) {
-                        vec4 plane = clippingPlanes[ i ];
-                        clipped = (dot(vViewPosition, plane.xyz) > plane.w) && clipped;
-                    }
-                    #pragma unroll_loop_end
-
-                    if (clipped) {
-                        discard;
-                    }
-                #endif
-            #endif
-
-            vec4 diffuseColor = vec4(1.0, 1.0, 1.0, 1.0);
-            color = diffuseColor;
-        }
-    `;
-
-    const material = new THREE.ShaderMaterial({
-        glslVersion: THREE.GLSL3,
-        uniforms: {
-            'uScale': { value: defaultPointSize }
-        },
-        vertexShader: vertexShader,
-        fragmentShader: fragmentShader,
-        clipping: true,
-        clippingPlanes: [clipPlane]
-    });
-
-    return material;
+    return circle;
 }
 
 function positionPlane(phi, theta) {
@@ -473,6 +503,11 @@ function positionPlane(phi, theta) {
     clipPlane.constant = imagePlane.position.x + 0.07;
     dirLight.position.set(satModel.position.x - 0.5, satModel.position.y + 0.5, satModel.position.z - 0.5);
     dirLight.target = satModel;
+
+    // Rotate the orbit track to align with the plane passing through satModel
+    const quat = new THREE.Quaternion();
+    quat.set(-0.0294, 0.001, -0.02, 1);
+    orbitTrack.quaternion.copy(quat);
 
 }
 
@@ -679,6 +714,34 @@ function initGUI() {
     folderMisc.addColor(propsMisc, 'atmColor').onChange(() => {
         atm.material.uniforms.uDayColor.value.set(propsMisc.atmColor);
     });
+    const quaternionParams = {
+        x: orbitTrack.quaternion.x,
+        y: orbitTrack.quaternion.y,
+        z: orbitTrack.quaternion.z,
+        w: orbitTrack.quaternion.w,
+    };
+
+    gui.add(quaternionParams, 'x', -1, 1).name('Quaternion X').onChange(updateQuaternion);
+    gui.add(quaternionParams, 'y', -1, 1).name('Quaternion Y').onChange(updateQuaternion);
+    gui.add(quaternionParams, 'z', -1, 1).name('Quaternion Z').onChange(updateQuaternion);
+    gui.add(quaternionParams, 'w', -1, 1).name('Quaternion W').onChange(updateQuaternion);
+
+    function updateQuaternion() {
+        // Normalize the quaternion components
+        const length = Math.sqrt(
+            quaternionParams.x ** 2 +
+            quaternionParams.y ** 2 +
+            quaternionParams.z ** 2 +
+            quaternionParams.w ** 2
+        );
+
+        orbitTrack.quaternion.set(
+            quaternionParams.x / length,
+            quaternionParams.y / length,
+            quaternionParams.z / length,
+            quaternionParams.w / length
+        );
+    }
 
     positionPlane(propsMisc.modelPhi, propsMisc.modelTheta);
     cloudModel.position.y = imagePlane.position.y - 0.07;
