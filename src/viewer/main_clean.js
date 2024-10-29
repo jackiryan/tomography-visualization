@@ -3,14 +3,12 @@ import * as THREE from 'three';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { NRRDLoader } from 'three/examples/jsm/loaders/NRRDLoader.js';
-import cloudVertexShader from './shaders/clouds/cloudVertex.glsl';
-import cloudFragmentShader from './shaders/clouds/cloudFragment.glsl';
 import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
 let container, camera, controls, scene, renderer;
-let cloudModel, satModel, imagePlane, clipPlane, ground, atm, frustum;
+let cloudModel, satModel, imagePlane, ground, frustum;
+let clipPlane, clipPlaneAxis;
 let sky, dirLight, orbitTrack;
 
 const useGltf = true;
@@ -41,7 +39,7 @@ console.log(`model dimension: ${modelDim}`);
 const defaultPointSize = 2.0;
 const initOffset = 3.5;
 const initSatScale = 0.04;
-const initClipPos = 0.07;
+const initClipPos = -1.02;
 const initClipDir = new THREE.Vector3(-1, 0, 0);
 const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
@@ -90,7 +88,7 @@ async function init() {
         const originalPlane = imagePlane.clone();
         originalPlane.children = [];
 
-        for (let x = -numCopies; x <= numCopies; x++) {
+        for (let x = -numCopies; x <= numCopies + 1; x++) {
             if (x === 0) continue; // Skip the original plane position
 
             const imPlaneClone = originalPlane.clone();
@@ -117,6 +115,9 @@ async function init() {
         }
 
         imagePlane.add(planeGroup);
+        //imagePlane.add(addNormalArrow(imagePlane));
+        clipPlaneAxis = new THREE.Vector3().copy(initClipDir);
+        console.log(clipPlaneAxis);
     });
     await loadSatellite(satelliteFile);
 
@@ -269,7 +270,7 @@ async function loadPlane(planeTex) {
                     uMap: { value: texture },
                     // use the lower value of the colormap radiance image as a chroma key
                     uKeyColor: { value: new THREE.Vector3(2 / 255, 10 / 255, 43 / 255) },
-                    uThreshold: { value: 0.0 }
+                    uThreshold: { value: 0.1 }
                 },
                 vertexShader: `
                     varying vec2 vUv;
@@ -313,6 +314,23 @@ async function loadPlane(planeTex) {
             reject(error);
         });
     });
+}
+
+function addNormalArrow(imagePlane) {
+    // Define the arrow properties
+    const arrowLength = 0.5; // Adjust length as needed
+    const arrowColor = 0xff0000; // Red color for visibility
+
+    // Calculate the normal direction of imagePlane
+    const normalDirection = new THREE.Vector3(0, -1, 0).applyQuaternion(imagePlane.quaternion).normalize();
+
+    // Create the ArrowHelper
+    const arrowHelper = new THREE.ArrowHelper(normalDirection, imagePlane.position, arrowLength, arrowColor);
+
+    // Add the ArrowHelper to the scene
+    scene.add(arrowHelper);
+
+    return arrowHelper;
 }
 
 async function loadSatellite(modelName) {
@@ -397,26 +415,32 @@ function positionScene(lat, lon, satHeight, rotAngle) {
     // This accounts for the -pi / 2 rotation on the x axis that the plane requires, 
     // otherwise the radiance image plane will appear perpendicular to ground/ocean
     const planeNormal = new THREE.Vector3(0, 0, 1);
-    const modelNormal = new THREE.Vector3(0, 1, 0);
+    const modelNormal = new THREE.Vector3(0, 0, 1);
 
 
     imagePlane.position.copy(planePosition);
     imagePlane.quaternion.setFromUnitVectors(planeNormal, normal);
 
-    // works for latitudes close to 90, idk why
-    //imagePlane.rotation.z = 0;
+    const normalDir = new THREE.Vector3(0, -1, 0).applyQuaternion(imagePlane.quaternion).normalize();
 
-    const rotationQuaternion = new THREE.Quaternion().setFromAxisAngle(normal, THREE.MathUtils.degToRad(rotAngle));
+
+    const rotationQuaternion = new THREE.Quaternion().setFromAxisAngle(normalDir, THREE.MathUtils.degToRad(rotAngle));
     //imagePlane.quaternion.multiply(rotationQuaternion);
 
     cloudModel.position.copy(planePosition);
-    cloudModel.quaternion.setFromUnitVectors(modelNormal, normal);
+    cloudModel.quaternion.setFromUnitVectors(modelNormal, normalDir);
     cloudModel.quaternion.multiply(rotationQuaternion);
 
     const satDisp = normal.clone().multiplyScalar(satHeight);
     satModel.position.copy(planePosition).add(satDisp);
-    satModel.quaternion.setFromUnitVectors(modelNormal, normal);
+    satModel.quaternion.setFromUnitVectors(modelNormal, normalDir);
     satModel.quaternion.multiply(rotationQuaternion);
+
+    if (imagePlane.arrowHelper) {
+        // Update arrow's position and direction
+        imagePlane.arrowHelper.position.copy(imagePlane.position);
+        imagePlane.arrowHelper.setDirection(normal.clone().applyQuaternion(rotationQuaternion));
+    }
 
     controls.target.copy(imagePlane.position);
     controls.update();
@@ -433,7 +457,7 @@ function initGUI() {
         cameraRotY: -55,
         modelLat: 81,
         modelLon: -120,
-        modelRot: -4.0,
+        modelRot: 4.0,
         satHeight: 0.6
     };
     function getCameraRotation() {
@@ -481,40 +505,42 @@ function initGUI() {
             renderer.localClippingEnabled = v;
         },
         get 'axis'() {
-            if (clipPlane.normal.x === -1) {
+            if (clipPlaneAxis.x === -1) {
                 return 'X';
             }
-            else if (clipPlane.normal.y === -1) {
+            else if (clipPlaneAxis.y === -1) {
                 return 'Y';
             }
-            else if (clipPlane.normal.z === -1) {
+            else if (clipPlaneAxis.z === -1) {
                 return 'Z';
             }
         },
         set 'axis'(v) {
             switch (v) {
                 case 'X':
-                    clipPlane.normal.set(-1, 0, 0);
+                    clipPlaneAxis.set(-1, 0, 0);
                     break;
                 case 'Y':
-                    clipPlane.normal.set(0, -1, 0);
+                    clipPlaneAxis.set(0, -1, 0);
                     break;
                 case 'Z':
-                    clipPlane.normal.set(0, 0, -1);
+                    clipPlaneAxis.set(0, 0, -1);
                     break;
             }
+            const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudModel.quaternion).normalize();
+            clipPlane.normal.copy(normalDir);
         },
         get 'planePosition'() {
             let imagePos;
             switch (propsClip.axis) {
                 case 'X':
-                    imagePos = imagePlane.position.x;
+                    imagePos = cloudModel.position.x;
                     break;
                 case 'Y':
-                    imagePos = imagePlane.position.y;
+                    imagePos = cloudModel.position.y;
                     break;
                 case 'Z':
-                    imagePos = imagePlane.position.z;
+                    imagePos = cloudModel.position.z;
                     break;
             }
             return clipPlane.constant - imagePos;
@@ -523,13 +549,13 @@ function initGUI() {
             let imagePos;
             switch (propsClip.axis) {
                 case 'X':
-                    imagePos = imagePlane.position.x;
+                    imagePos = cloudModel.position.x;
                     break;
                 case 'Y':
-                    imagePos = imagePlane.position.y;
+                    imagePos = cloudModel.position.y;
                     break;
                 case 'Z':
-                    imagePos = imagePlane.position.z;
+                    imagePos = cloudModel.position.z;
                     break;
             }
             clipPlane.constant = imagePos + v;
@@ -537,7 +563,7 @@ function initGUI() {
     };
     folderClip.add(propsClip, 'enabled');
     folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
-    folderClip.add(propsClip, 'planePosition', -1.0, 1.0, 0.01);
+    folderClip.add(propsClip, 'planePosition', -10.0, 10.0, 0.01);
 
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
@@ -563,7 +589,9 @@ function initGUI() {
     }
 
     positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-    clipPlane.constant = imagePlane.position.x + initClipPos;
+    const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudModel.quaternion).normalize();
+    clipPlane.normal.copy(normalDir);
+    clipPlane.constant = cloudModel.position.x + initClipPos;
     fitCameraToObject(camera, cloudModel, propsScene.cameraDist, getCameraRotation());
     controls.update();
 }
