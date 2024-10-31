@@ -40,6 +40,15 @@ options:
                         specify resource name (vertices binary file) if exporting to gltf. default is the same name as the model but with .bin extension
 ```
 
+### Generating the high-resolution point cloud file for the visualization
+
+The files `RICO_40m_80kmx80km_QC.gltf` and `RICO_40m_80kmx80km_QC.bin` are required to run the visualization component of this repo. To generate them with nc2gltf, you will need the source netcdf file and then you will need to run this command in the top level directory of this repo:
+```
+nc2gltf /path/to/RICO_40m_80kmx80km_T_qc_10.5h.nc -o static/RICO_40m_80kmx80km_QC.gltf
+```
+
+### NRRD generation (Rendering still WIP)
+
 The second tool, `nc2nrrd`, converts a tomography netCDF file into a 3-D raster that can be used for volumetric rendering. While this file cannot be viewed directly in a tool like Blender, the Javascript viewer application in this repo allows for loading and visualizing these files. Eventually, colormapping support will be added as well. The usage for this tool is as follows:
 ```
 usage: nc2nrrd [-h] [-o FILE] [-v VARIABLE] [-b BITS] FILE
