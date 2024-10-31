@@ -3,11 +3,13 @@ import * as THREE from 'three';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import atmVertexShader from './shaders/atm/atmVertex.glsl';
+import atmFragmentShader from './shaders/atm/atmFragment.glsl';
 import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
 let container, camera, controls, scene, renderer;
-let cloudGroup, satModel, imagePlane, ground;
+let cloudGroup, satModel, imagePlane, ground, atm;
 let clipPlane, clipPlaneAxis;
 let sky, keyLight, fillLight, orbitTrack;
 
@@ -153,6 +155,23 @@ async function init() {
     ground = new THREE.Mesh(groundGeo, groundMat);
     scene.add(ground);
     ground.position.copy(groundPosition);
+
+    /*
+    const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
+    const atmMat = new THREE.ShaderMaterial({
+        vertexShader: atmVertexShader,
+        fragmentShader: atmFragmentShader,
+        uniforms: {
+            uDayColor: new THREE.Uniform(new THREE.Color(0x00b5e2)),
+            uAtmFalloff: new THREE.Uniform(0.1)
+        },
+        side: THREE.BackSide,
+        transparent: true
+    });
+    atm = new THREE.Mesh(atmGeo, atmMat);
+    scene.add(atm);
+    atm.position.copy(groundPosition);
+    */
 
     orbitTrack = createCircle(groundSize + initSatParms.height, 1024, 0xffffff);
     scene.add(orbitTrack);
