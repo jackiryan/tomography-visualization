@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import atmVertexShader from './shaders/atm/atmVertex.glsl';
-import atmFragmentShader from './shaders/atm/atmFragment.glsl';
+// import atmVertexShader from './shaders/atm/atmVertex.glsl';
+// import atmFragmentShader from './shaders/atm/atmFragment.glsl';
 import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
@@ -58,6 +58,15 @@ const initSatParms = {
 };
 
 await init().then(() => {
+    for (const child of scene.children) {
+        console.log(child);
+        if (child.name === 'radiance') {
+            child.renderOrder = -1;
+        } else if (child.name === 'satellites') {
+            child.renderOrder = 0;
+        }
+        console.log(`Render order: ${child.renderOrder}`);
+    }
     requestAnimationFrame(animate);
     initGUI();
 });
@@ -122,8 +131,7 @@ async function init() {
                 imPlaneClone.material.uniforms.uThreshold.value = 0.1;
             }
 
-            console.log(`Radiance image at x = ${x}`);
-            console.log(imPlaneClone.material.uniforms);
+            console.log(`Radiance image at x = ${x}, threshold = ${imPlaneClone.material.uniforms.uThreshold.value}`);
 
             imPlaneClone.position.x = x;
             imPlaneClone.rotation.x = Math.PI;
@@ -385,6 +393,7 @@ async function loadPlane(planeTex) {
             imagePlane = new THREE.Mesh(planeGeo, planeMat);
             imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
             imagePlane.scale.y *= -1;
+            imagePlane.name = 'radiance';
             scene.add(imagePlane);
             resolve();
         }, undefined, function (error) {
@@ -475,6 +484,7 @@ async function loadSatellite(modelName) {
 
             // Add the original satellite model (with its clones) to the scene
             satModel.scale.set(initSatParms.scale, initSatParms.scale, initSatParms.scale);
+            satModel.name = 'satellites';
             scene.add(satModel);
             resolve();
         }, undefined, function (error) {
@@ -784,6 +794,7 @@ function initGUI() {
     gui.add(renderParms, 'fps', 10, 60, 1).onChange(() => {
         renderParms.interval = 1000 / renderParms.fps;
     });
+    gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Canvas');
 
     positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
     moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
@@ -840,3 +851,16 @@ function animate(time) {
 
     requestAnimationFrame(animate);
 }
+
+function captureCanvasImage() {
+    renderer.render(scene, camera);
+
+    const dataURL = renderer.domElement.toDataURL('image/png');
+
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = 'cloud_tomo_render.png';
+    link.click(); // Trigger download
+}
+
+
