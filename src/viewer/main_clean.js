@@ -38,7 +38,7 @@ const planeTexture = './MISR_40m_radiance_nadir_2048x2048.png';
 console.log(`loading model: ${modelFile}`);
 console.log(`model dimension: ${modelDim}`);
 
-const defaultPointSize = 2.0;
+const defaultPointSize = 0.1;
 const initOffset = 1.25;
 const initClipPos = -1.02;
 const initClipDir = new THREE.Vector3(-1, 0, 0);
@@ -852,6 +852,7 @@ function animate(time) {
     requestAnimationFrame(animate);
 }
 
+/*
 function captureCanvasImage() {
     renderer.render(scene, camera);
 
@@ -862,5 +863,30 @@ function captureCanvasImage() {
     link.download = 'cloud_tomo_render.png';
     link.click(); // Trigger download
 }
+*/
 
+function captureCanvasImage() {
+    // Store the current renderer size to go back to it after rendering at target res
+    const originalWidth = renderer.domElement.width;
+    const originalHeight = renderer.domElement.height;
+
+    // render at 4K
+    const targetWidth = 3840;
+    const targetHeight = 2160;
+    renderer.setSize(targetWidth, targetHeight, false);
+    renderer.setPixelRatio(1);
+
+    renderer.render(scene, camera);
+
+    const dataURL = renderer.domElement.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = 'tomography_isoview_3840x2160.png';
+    link.click(); // Trigger download
+
+    renderer.setSize(originalWidth, originalHeight, false);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    renderer.render(scene, camera);
+}
 
