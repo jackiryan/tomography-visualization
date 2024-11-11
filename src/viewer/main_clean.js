@@ -9,12 +9,13 @@ import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
 let container, camera, controls, scene, renderer;
-let cloudGroup, satModel, imagePlane, ground, atm;
+let cloudGroup, imagePlane, ground, satelliteGroup; //, atm;
 let clipPlane, clipPlaneAxis;
 let sky, keyLight, fillLight, orbitTrack;
 
 const useGltf = true;
 const useBigModel = true;
+const useNormalHelper = false;
 
 let modelDim = 400;
 if (useBigModel) {
@@ -38,12 +39,23 @@ const planeTexture = './MISR_40m_radiance_nadir_2048x2048.png';
 console.log(`loading model: ${modelFile}`);
 console.log(`model dimension: ${modelDim}`);
 
-const defaultPointSize = 0.1;
-const initOffset = 1.25;
-const initClipPos = -1.02;
 const initClipDir = new THREE.Vector3(-1, 0, 0);
 const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
+
+const sceneParms = {
+    offset: 1.25,
+    isoX: -34,
+    isoY: -70,
+    isoLat: 81,
+    isoLon: -120,
+    isoRot: 0,
+    isoClipPos: 0,
+    sideLat: 81,
+    sideLon: -90,
+    sideRot: 0,
+    sideClipPos: 0
+};
 
 const renderParms = {
     fps: 10,
@@ -51,11 +63,20 @@ const renderParms = {
     lastTime: 0
 };
 
-const initSatParms = {
+const satParms = {
     scale: 0.02,
     height: 0.4,
-    spacing: 0.6
+    spacing: 0.005
 };
+
+const cloudParms = {
+    pointSize: 0.1,
+    yOffset: 0.0,
+    color: new THREE.Color(0xffffff),
+    opacity: 1.0
+};
+
+const orbitRadius = groundSize + satParms.height;
 
 await init().then(() => {
     for (const child of scene.children) {
@@ -111,6 +132,10 @@ async function init() {
         const numCopies = 2;
         const planeGroup = new THREE.Group(); // Create a group to hold the clones
 
+        if (useNormalHelper) {
+            addNormalArrow(imagePlane);
+        }
+
         const originalPlane = imagePlane.clone();
         originalPlane.children = [];
 
@@ -140,11 +165,11 @@ async function init() {
         }
 
         imagePlane.add(planeGroup);
-        //imagePlane.add(addNormalArrow(imagePlane));
         clipPlaneAxis = new THREE.Vector3().copy(initClipDir);
         console.log(clipPlaneAxis);
     });
-    await loadSatellite(satelliteFile);
+    // load 3 satellites initially
+    await loadSatellite(satelliteFile, 3);
     await loadStars(starTexture);
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
@@ -181,10 +206,6 @@ async function init() {
     atm.position.copy(groundPosition);
     */
 
-    orbitTrack = createCircle(groundSize + initSatParms.height, 1024, 0xffffff);
-    scene.add(orbitTrack);
-    orbitTrack.position.copy(groundPosition);
-
     window.addEventListener('resize', onWindowResize, false);
 }
 
@@ -194,7 +215,8 @@ async function loadGLTF(modelName) {
             modelName,
             function (gltf) {
                 cloudGroup = new THREE.Group();
-                clipPlane = new THREE.Plane(initClipDir, initClipPos);
+                // scene opens in iso view, so use the value for the iso view
+                clipPlane = new THREE.Plane(initClipDir, sceneParms.isoClipPos);
                 const cloudModel = gltf.scene;
 
                 // First traversal to replace materials for Points nodes
@@ -293,6 +315,10 @@ function createPointCloudMaterial() {
 
         #endif
 
+
+        uniform vec3 uCloudColor;
+        uniform float uCloudOpacity;
+
         out vec4 color;
 
         void main() {
@@ -321,15 +347,19 @@ function createPointCloudMaterial() {
                 #endif
             #endif
 
-            vec4 diffuseColor = vec4(1.0, 1.0, 1.0, 1.0);
+            vec4 diffuseColor = vec4(uCloudColor, uCloudOpacity);
             color = diffuseColor;
         }
     `;
 
+    // Even though opacity is adjustable, I am not setting transparency to true
+    // until we know that adjusting opacity is a desirable effect for communicating the message
     const material = new THREE.ShaderMaterial({
         glslVersion: THREE.GLSL3,
         uniforms: {
-            'uScale': { value: defaultPointSize }
+            'uScale': { value: cloudParms.pointSize },
+            'uCloudColor': { value: cloudParms.color },
+            'uCloudOpacity': { value: cloudParms.opacity }
         },
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
@@ -391,7 +421,7 @@ async function loadPlane(planeTex) {
                 side: THREE.DoubleSide
             });
             imagePlane = new THREE.Mesh(planeGeo, planeMat);
-            imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
+            // Mirror flip the image to match the orientation of the point cloud
             imagePlane.scale.y *= -1;
             imagePlane.name = 'radiance';
             scene.add(imagePlane);
@@ -409,34 +439,37 @@ function addNormalArrow(imagePlane) {
     const arrowColor = 0xff0000; // Red color for visibility
 
     // Calculate the normal direction of imagePlane
-    const normalDirection = new THREE.Vector3(0, -1, 0).applyQuaternion(imagePlane.quaternion).normalize();
+    const normalDirection = new THREE.Vector3(0, 0, 1).applyQuaternion(imagePlane.quaternion).normalize();
 
     // Create the ArrowHelper
     const arrowHelper = new THREE.ArrowHelper(normalDirection, imagePlane.position, arrowLength, arrowColor);
 
     // Add the ArrowHelper to the scene
-    scene.add(arrowHelper);
+    imagePlane.add(arrowHelper);
 
     return arrowHelper;
 }
 
-async function loadSatellite(modelName) {
+async function loadSatellite(modelName, numSatellites) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (glb) {
-            satModel = glb.scene;
-            satModel.position.y = initSatParms.height;
+            satelliteGroup = new THREE.Group();
 
-            const frustumHeight = initSatParms.height / initSatParms.scale;
-            const frustumRadius = 1.0 / initSatParms.scale;
+            // Original satellite model
+            const satModel = glb.scene;
+            //satModel.position.y = satParms.height;
 
-            const satSpacing = initSatParms.spacing / initSatParms.scale;
+            const frustumHeight = satParms.height / satParms.scale;
+            const frustumRadius = 1.0 / satParms.scale;
+            satModel.scale.set(satParms.scale, satParms.scale, satParms.scale);
 
-            const createFrustum = (frustumRadius, frustumHeight, offset) => {
+            // Function to create a frustum
+            const createFrustum = (frustumRadius, frustumHeight, frustumLength) => {
                 const frustumGeo = new THREE.BufferGeometry();
                 const vertices = new Float32Array([
                     0, -1, 0,
-                    -frustumRadius / 2, -frustumHeight, -offset,
-                    frustumRadius / 2, -frustumHeight, -offset,
+                    -frustumRadius / 2, -frustumHeight, -frustumLength,
+                    frustumRadius / 2, -frustumHeight, -frustumLength,
                 ]);
                 frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
                 frustumGeo.setIndex([0, 1, 2]);
@@ -455,43 +488,96 @@ async function loadSatellite(modelName) {
                 return frustumMesh;
             };
 
+            orbitTrack = createCircle(orbitRadius, 1024, 0xffffff);
+            scene.add(orbitTrack);
+            orbitTrack.position.copy(groundPosition);
+            const modelUp = new THREE.Vector3(0, 1, 0);
+            const modelNormal = new THREE.Vector3()
+                .subVectors(imagePlane.position, groundPosition)
+                .normalize();
+            const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, modelNormal);
+            orbitTrack.quaternion.copy(modelQuat);
 
-            const originalFrustum = createFrustum(frustumRadius, frustumHeight, 0);
-            satModel.add(originalFrustum);
+            // Calculate the angular positions of the satellites
+            for (let i = 0; i < numSatellites; i++) {
+                let satellite, frustum;
+                const theta = (i - (numSatellites - 1) / 2) * satParms.spacing;
 
-            const satModelClone1 = satModel.clone();
-            const satModelClone2 = satModel.clone();
+                if (theta === 0) {
+                    satellite = satModel;
+                    frustum = createFrustum(frustumRadius, frustumHeight, 0);
+                    satellite.add(frustum);
+                    //frustum.position.set(0, -1, 0);
+                    //frustum.rotation.set(0, Math.PI / 2, 0);
+                } else {
+                    satellite = satModel.clone();
+                    satellite.remove(satellite.getObjectByName('frustum'));
 
-            satModelClone1.remove(satModelClone1.getObjectByName('frustum'));
-            satModelClone2.remove(satModelClone2.getObjectByName('frustum'));
-            const frustumClone1 = createFrustum(frustumRadius, frustumHeight, satSpacing);
-            satModelClone1.add(frustumClone1);
-            const frustumClone2 = createFrustum(frustumRadius, frustumHeight, -satSpacing);
-            satModelClone2.add(frustumClone2);
+                    const x = orbitRadius * Math.sin(theta);
+                    const y = orbitRadius * Math.cos(theta);
+                    const position = new THREE.Vector3(x, y, 0);
+                    position.applyQuaternion(orbitTrack.quaternion);
+                    position.add(orbitTrack.position);
+                    position.y -= satParms.height;
+                    satellite.position.copy(position);
 
-            // slop factors are added to account for the fact that I am not moving
-            // along the track exactly. TO DO: fix this when adding animations.
-            satModelClone1.children[0].position.set(satSpacing, 0.2, 0.2);
-            satModelClone1.children[0].rotation.set(0, Math.PI, -Math.PI / 4);
-            satModelClone2.children[0].position.set(-satSpacing, -0.6, -0.2);
-            satModelClone2.children[0].rotation.set(0, 0, Math.PI / 4);
-            satModelClone1.children[1].position.set(satSpacing, -0.4, 0);
-            satModelClone2.children[1].position.set(-satSpacing, -0.4, 0);
+                    // Calculate the vector from the ground position to the satellite
+                    const direction = new THREE.Vector3()
+                        .subVectors(position, groundPosition)
+                        .normalize();
 
-            // Add the clones as children of the original satellite model
-            satModel.add(satModelClone1);
-            satModel.add(satModelClone2);
+                    // Set the satellite's quaternion to face away from the ground position
+                    const up = new THREE.Vector3(0, 1, 0); // Assuming the satellite's up vector is Y
+                    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+                    satellite.quaternion.copy(quaternion);
 
-            // Add the original satellite model (with its clones) to the scene
-            satModel.scale.set(initSatParms.scale, initSatParms.scale, initSatParms.scale);
-            satModel.name = 'satellites';
-            scene.add(satModel);
+                    const frustumLength = (groundSize) * Math.tan(theta) / satParms.scale;
+                    console.log(frustumLength);
+                    frustum = createFrustum(frustumRadius, frustumHeight, frustumLength);
+                    satellite.add(frustum);
+                }
+
+                satelliteGroup.add(satellite);
+            }
+
+            satelliteGroup.name = 'satellites';
+
+            scene.add(satelliteGroup);
+
             resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load satellite model: ${error}`);
-            reject(error);
-        });
+        },
+            undefined,
+            function (error) {
+                console.error(`Failed to load satellite model: ${error}`);
+                reject(error);
+            }
+        );
     });
+}
+
+function adjustSatelliteAndFrustum(satellite, frustum, theta) {
+    if (theta === 0) {
+        // Center satellite (x === 0)
+        frustum.position.set(0, -1, 0);
+        frustum.rotation.set(0, Math.PI / 2, 0);
+    } else {
+        const x = orbitRadius * Math.sin(theta);
+        const y = orbitRadius * Math.cos(theta);
+        const position = new THREE.Vector3(x, y, 0);
+        position.applyQuaternion(orbitTrack.quaternion);
+        position.add(orbitTrack.position);
+        satellite.position.copy(position);
+
+        // Calculate the vector from the ground position to the satellite
+        const direction = new THREE.Vector3()
+            .subVectors(position, groundPosition)
+            .normalize();
+
+        // Set the satellite's quaternion to face away from the ground position
+        const up = new THREE.Vector3(0, 1, 0); // Assuming the satellite's up vector is Y
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+        satellite.quaternion.copy(quaternion);
+    }
 }
 
 async function loadStars(starTex) {
@@ -520,10 +606,8 @@ async function loadStars(starTex) {
 }
 
 function createCircle(radius, segments, color) {
-    // Create an array to hold the circle's vertices
     const positions = [];
 
-    // Generate the circle's points
     for (let i = 0; i <= segments; i++) {
         const theta = (i / segments) * Math.PI * 2;
         const x = radius * Math.cos(theta);
@@ -532,18 +616,13 @@ function createCircle(radius, segments, color) {
         positions.push(x, y, z);
     }
 
-    // Create a BufferGeometry and set its position attribute
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
-    // Create a material for the line
     const material = new THREE.LineBasicMaterial({ color });
 
-    // Create the LineLoop (connects the points in a loop)
+    // LineLoop connects the points in positions in a loop
     const circle = new THREE.LineLoop(geometry, material);
-
-    // Rotate the circle to wrap around the sphere appropriately
-    circle.rotation.x = Math.PI / 2; // Adjust as needed
 
     return circle;
 }
@@ -565,31 +644,32 @@ function getPosition(lat, lon) {
 }
 
 function positionScene(lat, lon, satHeight, rotAngle) {
+    // Determine the position and normal on the sphere for the given latitude and longitude
     const { position, normal } = getPosition(lat, lon);
     const planePosition = position;
 
     // This accounts for the -pi / 2 rotation on the x axis that the plane requires, 
     // otherwise the radiance image plane will appear perpendicular to ground/ocean
-    const planeNormal = new THREE.Vector3(0, 0, 1);
-    const modelNormal = new THREE.Vector3(0, 0, 1);
-
+    const modelUp = new THREE.Vector3(0, 1, 0);
+    const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, normal);
+    const rotationQuaternion = new THREE.Quaternion().setFromAxisAngle(normal, THREE.MathUtils.degToRad(rotAngle));
+    modelQuat.multiply(rotationQuaternion);
 
     imagePlane.position.copy(planePosition);
-    imagePlane.quaternion.setFromUnitVectors(planeNormal, normal);
+    imagePlane.quaternion.setFromUnitVectors(modelUp, normal);
+    imagePlane.rotateOnAxis(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
 
-    const normalDir = new THREE.Vector3(0, -1, 0).applyQuaternion(imagePlane.quaternion).normalize();
+    const cloudDisp = normal.clone().multiplyScalar(cloudParms.yOffset);
+    cloudGroup.position.copy(planePosition).add(cloudDisp);
+    cloudGroup.quaternion.copy(modelQuat);
 
-
-    const rotationQuaternion = new THREE.Quaternion().setFromAxisAngle(normalDir, THREE.MathUtils.degToRad(rotAngle));
-
-    cloudGroup.position.copy(planePosition);
-    cloudGroup.quaternion.setFromUnitVectors(modelNormal, normalDir);
-    cloudGroup.quaternion.multiply(rotationQuaternion);
+    const clipNormal = new THREE.Vector3(-1, 0, 0).applyQuaternion(cloudGroup.quaternion).normalize();
+    clipPlane.normal.copy(clipNormal);
+    clipPlane.constant = cloudGroup.position.x;
 
     const satDisp = normal.clone().multiplyScalar(satHeight);
-    satModel.position.copy(planePosition).add(satDisp);
-    satModel.quaternion.setFromUnitVectors(modelNormal, normalDir);
-    satModel.quaternion.multiply(rotationQuaternion);
+    satelliteGroup.position.copy(planePosition).add(satDisp);
+    satelliteGroup.quaternion.copy(modelQuat);
 
     if (imagePlane.arrowHelper) {
         // Update arrow's position and direction
@@ -599,8 +679,7 @@ function positionScene(lat, lon, satHeight, rotAngle) {
 
     sky.position.copy(planePosition);
 
-    const trackQuat = new THREE.Quaternion().setFromUnitVectors(modelNormal, normalDir);
-    orbitTrack.quaternion.copy(trackQuat);
+    orbitTrack.quaternion.copy(modelQuat);
 
     controls.target.copy(imagePlane.position);
     controls.update();
@@ -611,14 +690,15 @@ function initGUI() {
 
     /* Scene Positioning */
     const folderScene = gui.addFolder('Scene Positioning');
+    // initial gui props should be set to the iso view
     const propsScene = {
-        cameraDist: initOffset,
-        cameraRotX: -38,
-        cameraRotY: -66,
-        modelLat: 81,
-        modelLon: -120,
-        modelRot: 4.0,
-        satHeight: initSatParms.height
+        cameraDist: sceneParms.offset,
+        cameraRotX: sceneParms.isoX,
+        cameraRotY: sceneParms.isoY,
+        modelLat: sceneParms.isoLat,
+        modelLon: sceneParms.isoLon,
+        modelRot: sceneParms.isoRot,
+        satHeight: satParms.height
     };
     function getCameraRotation() {
         const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
@@ -727,27 +807,25 @@ function initGUI() {
 
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
-        const propsCloud = {
-            scale: defaultPointSize,
-            posY: 0.0
-        };
-
         function cloudsChanged() {
             for (let model of cloudGroup.children) {
                 model.traverse((node) => {
                     if (node instanceof THREE.Points) {
                         const uniforms = node.material.uniforms;
-                        uniforms['uScale'].value = propsCloud.scale;
+                        uniforms['uScale'].value = cloudParms.pointSize;
+                        uniforms['uCloudColor'].value = cloudParms.color;
+                        uniforms['uCloudOpacity'].value = cloudParms.opacity;
                     }
                 });
             }
             const { position, normal } = getPosition(propsScene.modelLat, propsScene.modelLon);
-            const cloudDisp = normal.clone().multiplyScalar(propsCloud.posY);
+            const cloudDisp = normal.clone().multiplyScalar(cloudParms.yOffset);
             cloudGroup.position.copy(position).add(cloudDisp);
-
         }
-        folderCloud.add(propsCloud, 'scale', 0.1, 10, 0.1).onChange(cloudsChanged);
-        folderCloud.add(propsCloud, 'posY', -0.2, 0.2, 0.01).onChange(cloudsChanged);
+        folderCloud.add(cloudParms, 'pointSize', 0.1, 10, 0.1).onChange(cloudsChanged);
+        folderCloud.add(cloudParms, 'yOffset', -0.2, 0.2, 0.01).onChange(cloudsChanged);
+        folderCloud.addColor(cloudParms, 'color').onChange(cloudsChanged);
+        folderCloud.add(cloudParms, 'opacity', 0.0, 1.0, 0.01).onChange(cloudsChanged);
         cloudsChanged();
     }
 
@@ -755,22 +833,22 @@ function initGUI() {
     const propsLight = {
         posX: 200.0,
         posY: 200.0,
-        posZ: -185.0,
+        posZ: -130.0,
         fillX: -30.0,
         fillY: 0.0,
         fillZ: -35.0
     };
     function moveLight(posX, posY, posZ) {
         keyLight.position.set(
-            satModel.position.x + posX,
-            satModel.position.y + posY,
-            satModel.position.z + posZ);
-        keyLight.target = satModel;
+            satelliteGroup.position.x + posX,
+            satelliteGroup.position.y + posY,
+            satelliteGroup.position.z + posZ);
+        keyLight.target = satelliteGroup;
         fillLight.position.set(
-            satModel.position.x + propsLight.fillX,
-            satModel.position.y + propsLight.fillY,
-            satModel.position.z + propsLight.fillZ);
-        fillLight.target = satModel;
+            satelliteGroup.position.x + propsLight.fillX,
+            satelliteGroup.position.y + propsLight.fillY,
+            satelliteGroup.position.z + propsLight.fillZ);
+        fillLight.target = satelliteGroup;
     }
     folderLight.add(propsLight, 'posX', 0, 200, 1).onChange(() => {
         moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
@@ -795,13 +873,14 @@ function initGUI() {
         renderParms.interval = 1000 / renderParms.fps;
     });
     gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Canvas');
+    gui.add({ captureSquare: captureSquareImage }, 'captureSquare').name('Capture Square Image');
 
     positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
     moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    console.log(satModel.quaternion);
+    console.log(satelliteGroup.quaternion);
     const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
     clipPlane.normal.copy(normalDir);
-    clipPlane.constant = cloudGroup.position.x + initClipPos;
+    clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
     fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
     controls.update();
 }
@@ -823,6 +902,11 @@ function fitCameraToObject(camera, object, offset, rotation) {
     cameraZ *= offset;
 
     const cameraOffset = new THREE.Vector3(0, 0, cameraZ);
+    const objectNormal = new THREE.Vector3()
+        .subVectors(object.position, groundPosition)
+        .normalize();
+    const modelQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), objectNormal);
+    cameraOffset.applyQuaternion(modelQuat);
     cameraOffset.applyEuler(rotation);
 
     // zoom out a little so that objects don't fill the screen
@@ -890,3 +974,27 @@ function captureCanvasImage() {
     renderer.render(scene, camera);
 }
 
+function captureSquareImage() {
+    // Store the current renderer size to go back to it after rendering at target res
+    const originalWidth = renderer.domElement.width;
+    const originalHeight = renderer.domElement.height;
+
+    // render at 4K
+    const targetWidth = 2000;
+    const targetHeight = 2000;
+    renderer.setSize(targetWidth, targetHeight, false);
+    renderer.setPixelRatio(1);
+
+    renderer.render(scene, camera);
+
+    const dataURL = renderer.domElement.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = 'tomography_isoview_2000x2000.png';
+    link.click(); // Trigger download
+
+    renderer.setSize(originalWidth, originalHeight, false);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    renderer.render(scene, camera);
+}
