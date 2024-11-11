@@ -16,6 +16,7 @@ let sky, keyLight, fillLight, orbitTrack;
 const useGltf = true;
 const useBigModel = true;
 const useNormalHelper = false;
+const useMultiFrusta = false;
 
 let modelDim = 400;
 if (useBigModel) {
@@ -51,6 +52,8 @@ const sceneParms = {
     isoLon: -120,
     isoRot: 0,
     isoClipPos: 0,
+    sideX: -12,
+    sideY: -6,
     sideLat: 81,
     sideLon: -90,
     sideRot: 0,
@@ -66,7 +69,11 @@ const renderParms = {
 const satParms = {
     scale: 0.02,
     height: 0.4,
-    spacing: 0.005
+    spacing: 0.005,
+    colT0: 0xf0e442,
+    colTm1: 0x56b4e9,
+    colTp1: 0xcc79a7,
+    colDft: 0x00ff00
 };
 
 const cloudParms = {
@@ -464,7 +471,7 @@ async function loadSatellite(modelName, numSatellites) {
             satModel.scale.set(satParms.scale, satParms.scale, satParms.scale);
 
             // Function to create a frustum
-            const createFrustum = (frustumRadius, frustumHeight, frustumLength) => {
+            const createFrustum = (frustumRadius, frustumHeight, frustumLength, col, id) => {
                 const frustumGeo = new THREE.BufferGeometry();
                 const vertices = new Float32Array([
                     0, -1, 0,
@@ -476,7 +483,7 @@ async function loadSatellite(modelName, numSatellites) {
                 frustumGeo.computeVertexNormals();
 
                 const frustumMaterial = new THREE.MeshBasicMaterial({
-                    color: 0x00ff00,
+                    color: col,
                     transparent: true,
                     opacity: 0.25,
                     side: THREE.DoubleSide,
@@ -484,7 +491,7 @@ async function loadSatellite(modelName, numSatellites) {
 
                 const frustumMesh = new THREE.Mesh(frustumGeo, frustumMaterial);
                 frustumMesh.rotation.set(0, Math.PI / 2, 0);
-                frustumMesh.name = 'frustum'; // Assign a name for easy identification
+                frustumMesh.name = `frustum${id}`; // Assign a name for easy identification
                 return frustumMesh;
             };
 
@@ -505,19 +512,31 @@ async function loadSatellite(modelName, numSatellites) {
 
                 if (theta === 0) {
                     satellite = satModel;
-                    frustum = createFrustum(frustumRadius, frustumHeight, 0);
-                    satellite.add(frustum);
-                    //frustum.position.set(0, -1, 0);
-                    //frustum.rotation.set(0, Math.PI / 2, 0);
+                    // TO DO: Make multi-frusta mode more modular
+                    if (useMultiFrusta) {
+                        frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colT0, 'C');
+                        const frustumOff = groundSize * Math.tan(satParms.spacing) / satParms.scale;
+                        const frustumL = createFrustum(frustumRadius, frustumHeight, -frustumOff, satParms.colTp1, 'L');
+                        const frustumR = createFrustum(frustumRadius, frustumHeight, frustumOff, satParms.colTm1, 'R');
+                        satellite.add(frustum);
+                        satellite.add(frustumL);
+                        satellite.add(frustumR);
+                    } else {
+                        frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colDft, 'C');
+                        satellite.add(frustum);
+                    }
+
                 } else {
                     satellite = satModel.clone();
-                    satellite.remove(satellite.getObjectByName('frustum'));
+                    satellite.remove(satellite.getObjectByName('frustumC'));
+
 
                     const x = orbitRadius * Math.sin(theta);
                     const y = orbitRadius * Math.cos(theta);
                     const position = new THREE.Vector3(x, y, 0);
                     position.applyQuaternion(orbitTrack.quaternion);
                     position.add(orbitTrack.position);
+                    // need to subtract height for some reason
                     position.y -= satParms.height;
                     satellite.position.copy(position);
 
@@ -531,10 +550,20 @@ async function loadSatellite(modelName, numSatellites) {
                     const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
                     satellite.quaternion.copy(quaternion);
 
-                    const frustumLength = (groundSize) * Math.tan(theta) / satParms.scale;
-                    console.log(frustumLength);
-                    frustum = createFrustum(frustumRadius, frustumHeight, frustumLength);
+                    const frustumLength = groundSize * Math.tan(theta) / satParms.scale;
+                    frustum = createFrustum(frustumRadius, frustumHeight, frustumLength, satParms.colT0, 'S');
                     satellite.add(frustum);
+
+                    if (useMultiFrusta) {
+                        satellite.remove(satellite.getObjectByName('frustumL'));
+                        satellite.remove(satellite.getObjectByName('frustumR'));
+                        let col = satParms.colTp1;
+                        if (theta < 0) {
+                            col = satParms.colTm1;
+                        }
+                        const frustumC = createFrustum(frustumRadius, frustumHeight, 0, col, 'C');
+                        satellite.add(frustumC);
+                    }
                 }
 
                 satelliteGroup.add(satellite);
@@ -553,31 +582,6 @@ async function loadSatellite(modelName, numSatellites) {
             }
         );
     });
-}
-
-function adjustSatelliteAndFrustum(satellite, frustum, theta) {
-    if (theta === 0) {
-        // Center satellite (x === 0)
-        frustum.position.set(0, -1, 0);
-        frustum.rotation.set(0, Math.PI / 2, 0);
-    } else {
-        const x = orbitRadius * Math.sin(theta);
-        const y = orbitRadius * Math.cos(theta);
-        const position = new THREE.Vector3(x, y, 0);
-        position.applyQuaternion(orbitTrack.quaternion);
-        position.add(orbitTrack.position);
-        satellite.position.copy(position);
-
-        // Calculate the vector from the ground position to the satellite
-        const direction = new THREE.Vector3()
-            .subVectors(position, groundPosition)
-            .normalize();
-
-        // Set the satellite's quaternion to face away from the ground position
-        const up = new THREE.Vector3(0, 1, 0); // Assuming the satellite's up vector is Y
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
-        satellite.quaternion.copy(quaternion);
-    }
 }
 
 async function loadStars(starTex) {
@@ -690,7 +694,8 @@ function initGUI() {
 
     /* Scene Positioning */
     const folderScene = gui.addFolder('Scene Positioning');
-    // initial gui props should be set to the iso view
+
+    // Initial GUI properties set to the iso view
     const propsScene = {
         cameraDist: sceneParms.offset,
         cameraRotX: sceneParms.isoX,
@@ -700,41 +705,94 @@ function initGUI() {
         modelRot: sceneParms.isoRot,
         satHeight: satParms.height
     };
+
+    const controllers = {}; // Object to store GUI controllers
+
     function getCameraRotation() {
         const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
         const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
         return new THREE.Euler(crX, crY, 0, 'XYZ');
     }
-    folderScene.add(propsScene, 'cameraDist', 0.1, 10, 0.05).onChange(() => {
+
+    // Store each controller reference
+    controllers.cameraDist = folderScene.add(propsScene, 'cameraDist', 0.1, 10, 0.05).onChange(() => {
         fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
-    folderScene.add(propsScene, 'cameraRotX', -180, 180, 1).onChange(() => {
+    controllers.cameraRotX = folderScene.add(propsScene, 'cameraRotX', -180, 180, 1).onChange(() => {
         fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
-    folderScene.add(propsScene, 'cameraRotY', -180, 180, 1).onChange(() => {
+    controllers.cameraRotY = folderScene.add(propsScene, 'cameraRotY', -180, 180, 1).onChange(() => {
         fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
-    folderScene.add(propsScene, 'modelLat', -90, 90, 1).onChange(() => {
+    controllers.modelLat = folderScene.add(propsScene, 'modelLat', -90, 90, 1).onChange(() => {
         positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
         fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
-    folderScene.add(propsScene, 'modelLon', -180, 180, 1).onChange(() => {
+    controllers.modelLon = folderScene.add(propsScene, 'modelLon', -180, 180, 1).onChange(() => {
         positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
         fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
-    folderScene.add(propsScene, 'modelRot', -45, 45, 0.1).onChange(() => {
+    controllers.modelRot = folderScene.add(propsScene, 'modelRot', -45, 45, 0.1).onChange(() => {
         positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
         controls.update();
     });
-    folderScene.add(propsScene, 'satHeight', 0, 1, 0.01).onChange(() => {
+    controllers.satHeight = folderScene.add(propsScene, 'satHeight', 0, 1, 0.01).onChange(() => {
         positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight);
         controls.update();
     });
+
+    // Define action functions for the profiles
+    const actions = {
+        viewIsoProfile: function () {
+            // Set propsScene values to iso profile values
+            propsScene.cameraRotX = sceneParms.isoX;
+            propsScene.cameraRotY = sceneParms.isoY;
+            propsScene.modelLat = sceneParms.isoLat;
+            propsScene.modelLon = sceneParms.isoLon;
+            propsScene.modelRot = sceneParms.isoRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            controls.update();
+
+            // Update the GUI controllers to reflect the new values
+            controllers.cameraRotX.updateDisplay();
+            controllers.cameraRotY.updateDisplay();
+            controllers.modelLat.updateDisplay();
+            controllers.modelLon.updateDisplay();
+            controllers.modelRot.updateDisplay();
+        },
+        viewSideProfile: function () {
+            // Set propsScene values to side profile values
+            propsScene.cameraRotX = sceneParms.sideX;
+            propsScene.cameraRotY = sceneParms.sideY;
+            propsScene.modelLat = sceneParms.sideLat;
+            propsScene.modelLon = sceneParms.sideLon;
+            propsScene.modelRot = sceneParms.sideRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            controls.update();
+
+            // Update the GUI controllers to reflect the new values
+            controllers.cameraRotX.updateDisplay();
+            controllers.cameraRotY.updateDisplay();
+            controllers.modelLat.updateDisplay();
+            controllers.modelLon.updateDisplay();
+            controllers.modelRot.updateDisplay();
+        }
+    };
+
+    // Add buttons to the GUI
+    folderScene.add(actions, 'viewIsoProfile').name('View Iso Profile');
+    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
 
     const folderClip = gui.addFolder('Clip Plane');
     const propsClip = {
@@ -935,19 +993,6 @@ function animate(time) {
 
     requestAnimationFrame(animate);
 }
-
-/*
-function captureCanvasImage() {
-    renderer.render(scene, camera);
-
-    const dataURL = renderer.domElement.toDataURL('image/png');
-
-    const link = document.createElement('a');
-    link.href = dataURL;
-    link.download = 'cloud_tomo_render.png';
-    link.click(); // Trigger download
-}
-*/
 
 function captureCanvasImage() {
     // Store the current renderer size to go back to it after rendering at target res
