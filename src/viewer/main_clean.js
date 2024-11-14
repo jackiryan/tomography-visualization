@@ -57,7 +57,7 @@ const sceneParms = {
     sideLat: 81,
     sideLon: -90,
     sideRot: 0,
-    sideClipPos: 0
+    sideClipPos: 0.5
 };
 
 const renderParms = {
@@ -70,6 +70,9 @@ const satParms = {
     scale: 0.02,
     height: 0.4,
     spacing: 0.005,
+    //colT0: 0x00ff00,
+    //colTm1: 0xff0000,
+    //colTp1: 0x0000ff,
     colT0: 0xf0e442,
     colTm1: 0x56b4e9,
     colTp1: 0xcc79a7,
@@ -95,6 +98,7 @@ await init().then(() => {
         }
         console.log(`Render order: ${child.renderOrder}`);
     }
+
     requestAnimationFrame(animate);
     initGUI();
 });
@@ -105,7 +109,11 @@ async function init() {
     document.body.appendChild(container);
 
     const aspect = window.innerWidth / window.innerHeight;
-    camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 5000);
+    if (useMultiFrusta) {
+        camera = new THREE.PerspectiveCamera(30, aspect, 0.1, 1000);
+    } else {
+        camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+    }
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000011);
@@ -222,8 +230,13 @@ async function loadGLTF(modelName) {
             modelName,
             function (gltf) {
                 cloudGroup = new THREE.Group();
-                // scene opens in iso view, so use the value for the iso view
+                // use side view default for multi frusta scene, otherwise use 0
                 clipPlane = new THREE.Plane(initClipDir, sceneParms.isoClipPos);
+                if (useMultiFrusta) {
+                    clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+                } else {
+                    clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+                }
                 const cloudModel = gltf.scene;
 
                 // First traversal to replace materials for Points nodes
@@ -278,7 +291,8 @@ function cloneModelSharingGeometryAndMaterials(original) {
     function traverseAndShare(originalNode, clonedNode) {
         if (originalNode.isMesh || originalNode.isPoints) {
             clonedNode.geometry = originalNode.geometry; // Share geometry
-            clonedNode.material = originalNode.material; // Share material
+            clonedNode.material = createPointCloudMaterial(); // Don't share material
+            clonedNode.material.uniforms['uCloudColor'] = new THREE.Color(0xffffff);
         }
 
         // Recursively traverse children
@@ -300,11 +314,15 @@ function createPointCloudMaterial() {
 
         uniform float uScale;
         
+        out vec3 vPosition;
+
         void main() {
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             // increasing the numerator increases the size of the points
             gl_PointSize = uScale / -mvPosition.z;
             gl_Position = projectionMatrix * mvPosition;
+
+            vPosition = position;
             #if NUM_CLIPPING_PLANES > 0 && ! defined(PHYSICAL) && ! defined(PHONG)
                 vViewPosition = -mvPosition.xyz;
             #endif
@@ -326,7 +344,25 @@ function createPointCloudMaterial() {
         uniform vec3 uCloudColor;
         uniform float uCloudOpacity;
 
+        in vec3 vPosition;
+
         out vec4 color;
+
+        vec3 ACESFilmToneMapping(vec3 color) {
+            const float a = 2.51;
+            const float b = 0.03;
+            const float c = 2.43;
+            const float d = 0.59;
+            const float e = 0.14;
+            return clamp((color * (a * color + b)) / (color * (c * color + d) + e), 0.0, 1.0);
+        }
+
+        vec3 LinearToSRGB(vec3 color) {
+            vec3 cutoff = step(vec3(0.0031308), color);
+            vec3 lower = color * 12.92;
+            vec3 higher = (pow(clamp(color, 0.0031308, 1.0), vec3(1.0 / 2.4)) * 1.055) - 0.055;
+            return mix(lower, higher, cutoff);
+        }
 
         void main() {
             #if NUM_CLIPPING_PLANES > 0
@@ -354,8 +390,25 @@ function createPointCloudMaterial() {
                 #endif
             #endif
 
-            vec4 diffuseColor = vec4(uCloudColor, uCloudOpacity);
-            color = diffuseColor;
+            /*
+            float t = (vPosition.x + 1024.0) / 2048.0;
+            t = clamp(t, 0.0, 1.0);
+            vec3 gradientColor;
+            vec3 uColortm1 = vec3(1.0);
+            vec3 uColort0 = vec3(0.0, 1.0, 1.0);
+            if (t <= 0.5) {
+                float t1 = smoothstep(0.0, 0.05, t / 0.5);
+                gradientColor = mix(uColortm1, uColort0, t1);
+            } else {
+                float t3 = smoothstep(0.0, 0.05, (t - 0.5) / 0.5);
+                gradientColor = mix(uColort0, uCloudColor, t3);
+            }
+            */
+            vec3 gradientColor = uCloudColor;
+            gradientColor = ACESFilmToneMapping(gradientColor);
+            gradientColor = LinearToSRGB(gradientColor);
+
+            color = vec4(gradientColor, uCloudOpacity);
         }
     `;
 
@@ -669,8 +722,6 @@ function positionScene(lat, lon, satHeight, rotAngle) {
 
     const clipNormal = new THREE.Vector3(-1, 0, 0).applyQuaternion(cloudGroup.quaternion).normalize();
     clipPlane.normal.copy(clipNormal);
-    clipPlane.constant = cloudGroup.position.x;
-
     const satDisp = normal.clone().multiplyScalar(satHeight);
     satelliteGroup.position.copy(planePosition).add(satDisp);
     satelliteGroup.quaternion.copy(modelQuat);
@@ -715,7 +766,7 @@ function initGUI() {
     }
 
     // Store each controller reference
-    controllers.cameraDist = folderScene.add(propsScene, 'cameraDist', 0.1, 10, 0.05).onChange(() => {
+    controllers.cameraDist = folderScene.add(propsScene, 'cameraDist', 0.1, 30, 0.05).onChange(() => {
         fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
     });
@@ -787,8 +838,18 @@ function initGUI() {
             controllers.modelLat.updateDisplay();
             controllers.modelLon.updateDisplay();
             controllers.modelRot.updateDisplay();
+
+            if (!useMultiFrusta) {
+                clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+            }
         }
     };
+    if (useMultiFrusta) {
+        propsScene.cameraDist = 13.5;
+        controllers.cameraDist.updateDisplay();
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+        actions.viewSideProfile();
+    }
 
     // Add buttons to the GUI
     folderScene.add(actions, 'viewIsoProfile').name('View Iso Profile');
@@ -866,12 +927,18 @@ function initGUI() {
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
         function cloudsChanged() {
+            let primary = true;
             for (let model of cloudGroup.children) {
                 model.traverse((node) => {
                     if (node instanceof THREE.Points) {
                         const uniforms = node.material.uniforms;
                         uniforms['uScale'].value = cloudParms.pointSize;
-                        uniforms['uCloudColor'].value = cloudParms.color;
+                        if (primary) {
+                            uniforms['uCloudColor'].value = cloudParms.color;
+                            primary = false;
+                        } else {
+                            uniforms['uCloudColor'].value = new THREE.Color(0xffffff);
+                        }
                         uniforms['uCloudOpacity'].value = cloudParms.opacity;
                     }
                 });
@@ -938,7 +1005,11 @@ function initGUI() {
     console.log(satelliteGroup.quaternion);
     const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
     clipPlane.normal.copy(normalDir);
-    clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+    if (useMultiFrusta) {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+    } else {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+    }
     fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
     controls.update();
 }
