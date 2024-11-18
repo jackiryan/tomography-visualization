@@ -16,7 +16,7 @@ let sky, keyLight, fillLight, orbitTrack;
 const useGltf = true;
 const useBigModel = true;
 const useNormalHelper = false;
-const useMultiFrusta = false;
+const useMultiFrusta = true;
 
 let modelDim = 400;
 if (useBigModel) {
@@ -70,12 +70,12 @@ const satParms = {
     scale: 0.02,
     height: 0.4,
     spacing: 0.005,
-    //colT0: 0x00ff00,
-    //colTm1: 0xff0000,
-    //colTp1: 0x0000ff,
-    colT0: 0xf0e442,
-    colTm1: 0x56b4e9,
-    colTp1: 0xcc79a7,
+    colT0: 0x00ff00,
+    colTm1: 0x0000ff,
+    colTp1: 0x0000ff,
+    //colT0: 0xf0e442,
+    //colTm1: 0x56b4e9,
+    //colTp1: 0xcc79a7,
     colDft: 0x00ff00
 };
 
