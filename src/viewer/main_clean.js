@@ -16,7 +16,7 @@ let sky, keyLight, fillLight, orbitTrack;
 const useGltf = true;
 const useBigModel = true;
 const useNormalHelper = false;
-const useMultiFrusta = true;
+const useMultiFrusta = false;
 
 let modelDim = 400;
 if (useBigModel) {
@@ -45,9 +45,12 @@ const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
 
 const sceneParms = {
-    offset: 1.25,
-    isoX: -34,
-    isoY: -70,
+    //offset: 1.25,
+    offset: 1.9,
+    //isoX: -34,
+    //isoY: -70,
+    isoX: -7,
+    isoY: -75,
     isoLat: 81,
     isoLon: -120,
     isoRot: 0,
@@ -94,7 +97,13 @@ await init().then(() => {
         if (child.name === 'radiance') {
             child.renderOrder = -1;
         } else if (child.name === 'satellites') {
-            child.renderOrder = 0;
+            let renderOrder = 6;
+            for (const sat of child.children) {
+                sat.renderOrder = renderOrder;
+                renderOrder -= 1;
+            }
+            // gets the left sat to render on top of other frusta
+            child.children[1].renderOrder = 7;
         }
         console.log(`Render order: ${child.renderOrder}`);
     }
@@ -184,7 +193,7 @@ async function init() {
         console.log(clipPlaneAxis);
     });
     // load 3 satellites initially
-    await loadSatellite(satelliteFile, 3);
+    await loadSatellite(satelliteFile, 5);
     await loadStars(starTexture);
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
@@ -526,10 +535,14 @@ async function loadSatellite(modelName, numSatellites) {
             // Function to create a frustum
             const createFrustum = (frustumRadius, frustumHeight, frustumLength, col, id) => {
                 const frustumGeo = new THREE.BufferGeometry();
+                let fudgeFactor = 0;
+                if (frustumLength > 40 || frustumLength < -40) {
+                    fudgeFactor = -0.25;
+                }
                 const vertices = new Float32Array([
                     0, -1, 0,
-                    -frustumRadius / 2, -frustumHeight, -frustumLength,
-                    frustumRadius / 2, -frustumHeight, -frustumLength,
+                    -frustumRadius / 2, -frustumHeight + fudgeFactor, -frustumLength,
+                    frustumRadius / 2, -frustumHeight + fudgeFactor, -frustumLength,
                 ]);
                 frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
                 frustumGeo.setIndex([0, 1, 2]);
