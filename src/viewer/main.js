@@ -9,7 +9,7 @@ import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
 let container, camera, controls, scene, renderer;
-let cloudGroup, imagePlane, ground, satelliteGroup; //, atm;
+let cloudGroup, imagePlane, ground, satelliteGroup, satModel; //, atm;
 let clipPlane, clipPlaneAxis;
 let sky, keyLight, fillLight, orbitTrack;
 
@@ -79,7 +79,10 @@ const satParms = {
     //colT0: 0xf0e442,
     //colTm1: 0x56b4e9,
     //colTp1: 0xcc79a7,
-    colDft: 0x00ff00
+    colDft: 0x00ff00,
+    numSatellites: 5,
+    minSatellites: 1,
+    maxSatellites: 11
 };
 
 const cloudParms = {
@@ -195,7 +198,7 @@ async function init() {
         console.log(clipPlaneAxis);
     });
     // load 3 satellites initially
-    await loadSatellite(satelliteFile, 3);
+    await loadSatellite(satelliteFile);
     await loadStars(starTexture);
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
@@ -521,6 +524,164 @@ function addNormalArrow(imagePlane) {
     return arrowHelper;
 }
 
+async function loadSatellite(modelName) {
+    return new Promise((resolve, reject) => {
+        new GLTFLoader().load(
+            modelName,
+            function (glb) {
+                if (!satelliteGroup) {
+                    satelliteGroup = new THREE.Group();
+                    satelliteGroup.name = 'satellites';
+                    scene.add(satelliteGroup);
+                }
+
+                satModel = glb.scene;
+                satModel.scale.set(satParms.scale, satParms.scale, satParms.scale);
+
+                // create the clones of the original glb
+                createSatellites(satParms.numSatellites);
+
+                resolve();
+            },
+            undefined,
+            function (error) {
+                console.error(`Failed to load satellite model: ${error}`);
+                reject(error);
+            }
+        );
+    });
+}
+
+function createSatellites(numSatellites) {
+    const orbitRadius = groundSize + satParms.height;
+
+    if (!orbitTrack) {
+        orbitTrack = createCircle(orbitRadius, 1024, 0xffffff);
+        scene.add(orbitTrack);
+        orbitTrack.position.copy(groundPosition);
+
+        const modelUp = new THREE.Vector3(0, 1, 0);
+        const modelNormal = new THREE.Vector3()
+            .subVectors(imagePlane.position, groundPosition)
+            .normalize();
+        const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, modelNormal);
+        orbitTrack.quaternion.copy(modelQuat);
+    }
+
+    const frustumHeight = satParms.height / satParms.scale;
+    const frustumRadius = 1.0 / satParms.scale;
+
+    // Loop to create satellites along the orbitTrack
+    for (let i = 0; i < numSatellites; i++) {
+        let satellite, frustum;
+        const theta = (i - (numSatellites - 1) / 2) * satParms.spacing;
+
+        const createFrustum = (frustumRadius, frustumHeight, frustumLength, col, id) => {
+            const frustumGeo = new THREE.BufferGeometry();
+            // Experimentally derived way to slightly adjust the frustum component down for satellites
+            // that are further out. This makes the line where the frusta meet line up visually. 
+            const frustumAdjustment = -0.2 * (Math.abs(frustumLength) - 25) / 25;
+            const vertices = new Float32Array([
+                0, -1, 0,
+                -frustumRadius / 2, -frustumHeight + frustumAdjustment, -frustumLength,
+                frustumRadius / 2, -frustumHeight + frustumAdjustment, -frustumLength,
+            ]);
+            frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            frustumGeo.setIndex([0, 1, 2]);
+            frustumGeo.computeVertexNormals();
+
+            const frustumMaterial = new THREE.MeshBasicMaterial({
+                color: col,
+                transparent: true,
+                opacity: 0.25,
+                side: THREE.DoubleSide,
+            });
+
+            const frustumMesh = new THREE.Mesh(frustumGeo, frustumMaterial);
+            frustumMesh.rotation.set(0, Math.PI / 2, 0);
+            frustumMesh.name = `frustum${id}`; // Assign a name for easy identification
+            return frustumMesh;
+        };
+
+        if (theta === 0) {
+            satellite = satModel.clone();
+            satellite.remove(satellite.getObjectByName('frustumC'));
+            if (useMultiFrusta) {
+                frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colT0, 'C');
+                const frustumOff = groundSize * Math.tan(satParms.spacing) / satParms.scale;
+                const frustumL = createFrustum(frustumRadius, frustumHeight, -frustumOff, satParms.colTp1, 'L');
+                const frustumR = createFrustum(frustumRadius, frustumHeight, frustumOff, satParms.colTm1, 'R');
+                satellite.add(frustum);
+                satellite.add(frustumL);
+                satellite.add(frustumR);
+            } else {
+                frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colDft, 'C');
+                satellite.add(frustum);
+            }
+        } else {
+            satellite = satModel.clone();
+            satellite.remove(satellite.getObjectByName('frustumC'));
+
+            const x = orbitRadius * Math.sin(theta);
+            const y = orbitRadius * Math.cos(theta);
+            const position = new THREE.Vector3(x, y, 0);
+            position.applyQuaternion(orbitTrack.quaternion);
+            position.add(orbitTrack.position);
+            position.y -= satParms.height;
+
+            satellite.position.copy(position);
+
+            // Calculate the vector from the ground position to the satellite
+            const direction = new THREE.Vector3()
+                .subVectors(position, groundPosition)
+                .normalize();
+
+            // Set the satellite's quaternion to face away from the ground position
+            const up = new THREE.Vector3(0, 1, 0);
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+            satellite.quaternion.copy(quaternion);
+
+            const frustumLength = groundSize * Math.tan(theta) / satParms.scale;
+            frustum = createFrustum(frustumRadius, frustumHeight, frustumLength, satParms.colT0, 'S');
+            satellite.add(frustum);
+
+            if (useMultiFrusta) {
+                satellite.remove(satellite.getObjectByName('frustumL'));
+                satellite.remove(satellite.getObjectByName('frustumR'));
+                let col = satParms.colTp1;
+                if (theta < 0) {
+                    col = satParms.colTm1;
+                }
+                const frustumC = createFrustum(frustumRadius, frustumHeight, 0, col, 'C');
+                satellite.add(frustumC);
+            }
+        }
+
+        satelliteGroup.add(satellite);
+    }
+}
+
+function updateSatellites() {
+    // Remove existing satellites from the group
+    while (satelliteGroup.children.length > 0) {
+        const satellite = satelliteGroup.children[0];
+        satelliteGroup.remove(satellite);
+
+        // Dispose of geometries and materials to free memory
+        satellite.traverse((node) => {
+            if (node.isMesh || node.isPoints) {
+                if (node.geometry) node.geometry.dispose();
+                if (node.material) node.material.dispose();
+            }
+        });
+    }
+
+    // Recreate satellites with the updated number
+    createSatellites(satParms.numSatellites);
+}
+
+
+/*
 async function loadSatellite(modelName, numSatellites) {
     return new Promise((resolve, reject) => {
         new GLTFLoader().load(modelName, function (glb) {
@@ -650,6 +811,7 @@ async function loadSatellite(modelName, numSatellites) {
         );
     });
 }
+*/
 
 async function loadStars(starTex) {
     return new Promise((resolve, reject) => {
@@ -1006,6 +1168,11 @@ function initGUI() {
     });
     folderLight.add(propsLight, 'fillZ', -50, 50, 1).onChange(() => {
         moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+
+    const satelliteFolder = gui.addFolder('Satellites');
+    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 1).name('Number of Satellites').onChange(() => {
+        updateSatellites();
     });
 
     gui.add(renderParms, 'fps', 10, 60, 1).onChange(() => {
