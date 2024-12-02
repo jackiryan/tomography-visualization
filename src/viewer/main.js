@@ -52,7 +52,7 @@ const sceneParms = {
     isoLon: -120,
     isoRot: 0,
     isoClipPos: 0,
-    sideX: -18,
+    sideX: -14,
     sideY: -6,
     sideLat: 81,
     sideLon: -90,
@@ -775,8 +775,7 @@ function positionScene(lat, lon, satHeight, rotAngle) {
 
     orbitTrack.quaternion.copy(modelQuat);
 
-    controls.target.copy(imagePlane.position);
-    controls.update();
+    setControlTarget();
 }
 
 function getDefaultCameraRot() {
@@ -788,20 +787,29 @@ function getDefaultCameraRot() {
         camY: 0
     }
     const satelliteArg = Math.max((satParms.numSatellites - sceneParms.initSats), 0);
-    if (satelliteArg <= 2) {
-        cameraRot.camDist = sceneParms.offset + (satelliteArg * 0.325);
-    } else {
-        cameraRot.camDist = Math.min(1.8 + (satelliteArg * 0.05), 2.1);
-    }
+
 
     if (sceneParms.viewType === 'iso') {
-        cameraRot.camX = Math.min(sceneParms.isoX + (satelliteArg * 5), -14);
-        cameraRot.camY = Math.min(sceneParms.isoY + (satelliteArg * 2.5), -65);
+        cameraRot.camDist = Math.min(sceneParms.offset + (satelliteArg * 0.325), 2.0);
+        cameraRot.camX = Math.min(sceneParms.isoX + (satelliteArg * 5), -8);
+        cameraRot.camY = sceneParms.isoY;
+        //cameraRot.camY = Math.min(sceneParms.isoY + (satelliteArg * 2.5), -65);
     } else {
-        cameraRot.camX = Math.min(sceneParms.sideX + (satelliteArg * 2), -8);
+        cameraRot.camDist = Math.min(sceneParms.offset + (satelliteArg * 0.125), 1.8);
+        cameraRot.camX = sceneParms.sideX;
         cameraRot.camY = sceneParms.sideY;
+        setControlTarget();
     }
     return cameraRot;
+}
+
+function setControlTarget() {
+    const targetPos = new THREE.Vector3().copy(imagePlane.position);
+    if (sceneParms.viewType === 'side') {
+        targetPos.y += satParms.height / 2;
+    }
+    controls.target.copy(targetPos);
+    controls.update();
 }
 
 
@@ -861,82 +869,6 @@ function initGUI() {
         positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight);
         controls.update();
     });
-
-    // Define action functions for the profiles
-    const actions = {
-        viewIsoProfile: function () {
-            // Set propsScene values to iso profile values
-            sceneParms.viewType = 'iso';
-            const cameraRot = getDefaultCameraRot()
-            propsScene.cameraRotX = cameraRot.camX;
-            propsScene.cameraRotY = cameraRot.camY;
-            propsScene.modelLat = sceneParms.isoLat;
-            propsScene.modelLon = sceneParms.isoLon;
-            propsScene.modelRot = sceneParms.isoRot;
-
-            // Update the scene
-            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-            controls.update();
-
-            // Update the GUI controllers to reflect the new values
-            controllers.cameraRotX.updateDisplay();
-            controllers.cameraRotY.updateDisplay();
-            controllers.modelLat.updateDisplay();
-            controllers.modelLon.updateDisplay();
-            controllers.modelRot.updateDisplay();
-            controls.target.copy(imagePlane.position);
-
-
-        },
-        viewSideProfile: function () {
-            // Set propsScene values to side profile values
-            sceneParms.viewType = 'side';
-            const cameraRot = getDefaultCameraRot()
-            propsScene.cameraRotX = cameraRot.camX;
-            propsScene.cameraRotY = cameraRot.camY;
-            propsScene.modelLat = sceneParms.sideLat;
-            propsScene.modelLon = sceneParms.sideLon;
-            propsScene.modelRot = sceneParms.sideRot;
-
-            // Update the scene
-            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-            controls.update();
-
-            // Update the GUI controllers to reflect the new values
-            controllers.cameraRotX.updateDisplay();
-            controllers.cameraRotY.updateDisplay();
-            controllers.modelLat.updateDisplay();
-            controllers.modelLon.updateDisplay();
-            controllers.modelRot.updateDisplay();
-
-            if (!useMultiFrusta) {
-                clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
-            }
-
-            const targetPos = new THREE.Vector3().copy(imagePlane.position);
-            targetPos.y += satParms.height / 2;
-            controls.target.copy(targetPos);
-
-        }
-    };
-    if (useMultiFrusta) {
-        propsScene.cameraDist = 13.5;
-        controllers.cameraDist.updateDisplay();
-        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
-        actions.viewSideProfile();
-    } else {
-        if (sceneParms.viewType === 'iso') {
-            actions.viewIsoProfile();
-        } else {
-            actions.viewSideProfile();
-        }
-    }
-
-    // Add buttons to the GUI
-    folderScene.add(actions, 'viewIsoProfile').name('View Iso Profile');
-    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
 
     const folderClip = gui.addFolder('Clip Plane');
     const propsClip = {
@@ -1005,7 +937,72 @@ function initGUI() {
     };
     folderClip.add(propsClip, 'enabled');
     folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
-    folderClip.add(propsClip, 'planePosition', -10.0, 10.0, 0.01);
+    controllers.planePosition = folderClip.add(propsClip, 'planePosition', -10.0, 10.0, 0.01);
+
+    // Define action functions for the profiles
+    const actions = {
+        viewIsoProfile: function () {
+            // Set propsScene values to iso profile values
+            sceneParms.viewType = 'iso';
+            const cameraRot = getDefaultCameraRot()
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.isoLat;
+            propsScene.modelLon = sceneParms.isoLon;
+            propsScene.modelRot = sceneParms.isoRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+
+            // Update the GUI controllers to reflect the new values
+            controllers.cameraRotX.updateDisplay();
+            controllers.cameraRotY.updateDisplay();
+            controllers.modelLat.updateDisplay();
+            controllers.modelLon.updateDisplay();
+            controllers.modelRot.updateDisplay();
+            if (!useMultiFrusta) {
+                controllers.planePosition.setValue(sceneParms.isoClipPos);
+                controllers.planePosition.updateDisplay();
+            }
+        },
+        viewSideProfile: function () {
+            // Set propsScene values to side profile values
+            sceneParms.viewType = 'side';
+            const cameraRot = getDefaultCameraRot()
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.sideLat;
+            propsScene.modelLon = sceneParms.sideLon;
+            propsScene.modelRot = sceneParms.sideRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+
+            // Update the GUI controllers to reflect the new values
+            controllers.cameraRotX.updateDisplay();
+            controllers.cameraRotY.updateDisplay();
+            controllers.modelLat.updateDisplay();
+            controllers.modelLon.updateDisplay();
+            controllers.modelRot.updateDisplay();
+            if (!useMultiFrusta) {
+                controllers.planePosition.setValue(sceneParms.isoClipPos);
+                controllers.planePosition.updateDisplay();
+            }
+        }
+    };
+    if (useMultiFrusta) {
+        propsScene.cameraDist = 13.5;
+        controllers.cameraDist.updateDisplay();
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+        actions.viewSideProfile();
+    }
+    // Add buttons to the GUI
+    folderScene.add(actions, 'viewIsoProfile').name('View Iso Profile');
+    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
 
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
