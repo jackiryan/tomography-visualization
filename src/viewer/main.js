@@ -99,15 +99,7 @@ await init().then(() => {
         if (child.name === 'radiance') {
             child.renderOrder = -1;
         } else if (child.name === 'satellites') {
-            if (child.children.length > 3) {
-                let renderOrder = child.children.length + 1;
-                for (const sat of child.children) {
-                    sat.renderOrder = renderOrder;
-                    renderOrder -= 1;
-                }
-                // gets the left sat to render on top of other frusta
-                child.children[1].renderOrder = child.children.length + 2;
-            }
+            setSatelliteRenderOrder(satParms.numSatellites);
         }
         console.log(`Render order: ${child.renderOrder}`);
     }
@@ -656,6 +648,7 @@ function createSatellites(numSatellites) {
 
         satelliteGroup.add(satellite);
     }
+    setSatelliteRenderOrder(numSatellites);
 }
 
 function updateSatellites() {
@@ -674,6 +667,29 @@ function updateSatellites() {
     }
 
     createSatellites(satParms.numSatellites);
+}
+
+function setSatelliteRenderOrder(numSatellites) {
+    if (sceneParms.viewType == 'side') {
+        const nadirIndex = Math.ceil(numSatellites / 2);
+        for (let i = 1; i <= numSatellites; i++) {
+            let renderOrder;
+            if (i < nadirIndex) {
+                renderOrder = i;
+            } else if (i === nadirIndex) {
+                renderOrder = numSatellites;
+            } else {
+                renderOrder = numSatellites - (i - nadirIndex);
+            }
+            satelliteGroup.children[i - 1].renderOrder = renderOrder;
+        }
+    } else {
+        let renderOrder = numSatellites + 1;
+        for (const sat of satelliteGroup.children) {
+            sat.renderOrder = renderOrder;
+            renderOrder -= 1;
+        }
+    }
 }
 
 async function loadStars(starTex) {
@@ -955,6 +971,7 @@ function initGUI() {
             positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
             fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
             setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
 
             // Update the GUI controllers to reflect the new values
             controllers.cameraRotX.updateDisplay();
@@ -981,6 +998,7 @@ function initGUI() {
             positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
             fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
             setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
 
             // Update the GUI controllers to reflect the new values
             controllers.cameraRotX.updateDisplay();
