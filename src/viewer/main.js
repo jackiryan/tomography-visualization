@@ -45,22 +45,21 @@ const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
 
 const sceneParms = {
-    //offset: 1.25,
-    offset: 1.9,
-    //isoX: -34,
-    //isoY: -70,
-    isoX: -7,
-    isoY: -75,
+    offset: 1.25,
+    isoX: -34,
+    isoY: -70,
     isoLat: 81,
     isoLon: -120,
     isoRot: 0,
     isoClipPos: 0,
-    sideX: -12,
+    sideX: -18,
     sideY: -6,
     sideLat: 81,
     sideLon: -90,
     sideRot: 0,
-    sideClipPos: 0.5
+    sideClipPos: 0.5,
+    initSats: 3,
+    viewType: 'iso'
 };
 
 const renderParms = {
@@ -80,7 +79,7 @@ const satParms = {
     //colTm1: 0x56b4e9,
     //colTp1: 0xcc79a7,
     colDft: 0x00ff00,
-    numSatellites: 5,
+    numSatellites: sceneParms.initSats,
     minSatellites: 1,
     maxSatellites: 11
 };
@@ -197,7 +196,6 @@ async function init() {
         clipPlaneAxis = new THREE.Vector3().copy(initClipDir);
         console.log(clipPlaneAxis);
     });
-    // load 3 satellites initially
     await loadSatellite(satelliteFile);
     await loadStars(starTexture);
 
@@ -555,16 +553,14 @@ async function loadSatellite(modelName) {
 function createSatellites(numSatellites) {
     const orbitRadius = groundSize + satParms.height;
 
+    const modelUp = new THREE.Vector3(0, 1, 0);
+    const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, modelUp);
+    const satSpacing = Math.max(satParms.spacing - 0.0005 * Math.max(numSatellites - 5, 0), 0.0025);
+
     if (!orbitTrack) {
         orbitTrack = createCircle(orbitRadius, 1024, 0xffffff);
         scene.add(orbitTrack);
         orbitTrack.position.copy(groundPosition);
-
-        const modelUp = new THREE.Vector3(0, 1, 0);
-        const modelNormal = new THREE.Vector3()
-            .subVectors(imagePlane.position, groundPosition)
-            .normalize();
-        const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, modelNormal);
         orbitTrack.quaternion.copy(modelQuat);
     }
 
@@ -574,7 +570,7 @@ function createSatellites(numSatellites) {
     // Loop to create satellites along the orbitTrack
     for (let i = 0; i < numSatellites; i++) {
         let satellite, frustum;
-        const theta = (i - (numSatellites - 1) / 2) * satParms.spacing;
+        const theta = (i - (numSatellites - 1) / 2) * satSpacing;
 
         const createFrustum = (frustumRadius, frustumHeight, frustumLength, col, id) => {
             const frustumGeo = new THREE.BufferGeometry();
@@ -608,7 +604,7 @@ function createSatellites(numSatellites) {
             satellite.remove(satellite.getObjectByName('frustumC'));
             if (useMultiFrusta) {
                 frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colT0, 'C');
-                const frustumOff = groundSize * Math.tan(satParms.spacing) / satParms.scale;
+                const frustumOff = groundSize * Math.tan(satSpacing) / satParms.scale;
                 const frustumL = createFrustum(frustumRadius, frustumHeight, -frustumOff, satParms.colTp1, 'L');
                 const frustumR = createFrustum(frustumRadius, frustumHeight, frustumOff, satParms.colTm1, 'R');
                 satellite.add(frustum);
@@ -625,8 +621,9 @@ function createSatellites(numSatellites) {
             const x = orbitRadius * Math.sin(theta);
             const y = orbitRadius * Math.cos(theta);
             const position = new THREE.Vector3(x, y, 0);
-            position.applyQuaternion(orbitTrack.quaternion);
-            position.add(orbitTrack.position);
+
+            position.applyQuaternion(modelQuat);
+            position.add(groundPosition);
             position.y -= satParms.height;
 
             satellite.position.copy(position);
@@ -676,142 +673,8 @@ function updateSatellites() {
         });
     }
 
-    // Recreate satellites with the updated number
     createSatellites(satParms.numSatellites);
 }
-
-
-/*
-async function loadSatellite(modelName, numSatellites) {
-    return new Promise((resolve, reject) => {
-        new GLTFLoader().load(modelName, function (glb) {
-            satelliteGroup = new THREE.Group();
-
-            // Original satellite model
-            const satModel = glb.scene;
-            //satModel.position.y = satParms.height;
-
-            const frustumHeight = satParms.height / satParms.scale;
-            const frustumRadius = 1.0 / satParms.scale;
-            satModel.scale.set(satParms.scale, satParms.scale, satParms.scale);
-
-            // Function to create a frustum
-            const createFrustum = (frustumRadius, frustumHeight, frustumLength, col, id) => {
-                const frustumGeo = new THREE.BufferGeometry();
-                // Experimentally derived way to slightly adjust the frustum component down for satellites
-                // that are further out. This makes the line where the frusta meet line up visually. 
-                const frustumAdjustment = -0.2 * (Math.abs(frustumLength) - 25) / 25;
-                const vertices = new Float32Array([
-                    0, -1, 0,
-                    -frustumRadius / 2, -frustumHeight + frustumAdjustment, -frustumLength,
-                    frustumRadius / 2, -frustumHeight + frustumAdjustment, -frustumLength,
-                ]);
-                frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-                frustumGeo.setIndex([0, 1, 2]);
-                frustumGeo.computeVertexNormals();
-
-                const frustumMaterial = new THREE.MeshBasicMaterial({
-                    color: col,
-                    transparent: true,
-                    opacity: 0.25,
-                    side: THREE.DoubleSide,
-                });
-
-                const frustumMesh = new THREE.Mesh(frustumGeo, frustumMaterial);
-                frustumMesh.rotation.set(0, Math.PI / 2, 0);
-                frustumMesh.name = `frustum${id}`; // Assign a name for easy identification
-                return frustumMesh;
-            };
-
-            orbitTrack = createCircle(orbitRadius, 1024, 0xffffff);
-            scene.add(orbitTrack);
-            orbitTrack.position.copy(groundPosition);
-            const modelUp = new THREE.Vector3(0, 1, 0);
-            const modelNormal = new THREE.Vector3()
-                .subVectors(imagePlane.position, groundPosition)
-                .normalize();
-            const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, modelNormal);
-            orbitTrack.quaternion.copy(modelQuat);
-
-            // Calculate the angular positions of the satellites
-            for (let i = 0; i < numSatellites; i++) {
-                let satellite, frustum;
-                const theta = (i - (numSatellites - 1) / 2) * satParms.spacing;
-
-                if (theta === 0) {
-                    satellite = satModel;
-                    // TO DO: Make multi-frusta mode more modular
-                    if (useMultiFrusta) {
-                        frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colT0, 'C');
-                        const frustumOff = groundSize * Math.tan(satParms.spacing) / satParms.scale;
-                        const frustumL = createFrustum(frustumRadius, frustumHeight, -frustumOff, satParms.colTp1, 'L');
-                        const frustumR = createFrustum(frustumRadius, frustumHeight, frustumOff, satParms.colTm1, 'R');
-                        satellite.add(frustum);
-                        satellite.add(frustumL);
-                        satellite.add(frustumR);
-                    } else {
-                        frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colDft, 'C');
-                        satellite.add(frustum);
-                    }
-
-                } else {
-                    satellite = satModel.clone();
-                    satellite.remove(satellite.getObjectByName('frustumC'));
-
-
-                    const x = orbitRadius * Math.sin(theta);
-                    const y = orbitRadius * Math.cos(theta);
-                    const position = new THREE.Vector3(x, y, 0);
-                    position.applyQuaternion(orbitTrack.quaternion);
-                    position.add(orbitTrack.position);
-                    // need to subtract height for some reason
-                    position.y -= satParms.height;
-                    satellite.position.copy(position);
-
-                    // Calculate the vector from the ground position to the satellite
-                    const direction = new THREE.Vector3()
-                        .subVectors(position, groundPosition)
-                        .normalize();
-
-                    // Set the satellite's quaternion to face away from the ground position
-                    const up = new THREE.Vector3(0, 1, 0); // Assuming the satellite's up vector is Y
-                    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
-                    satellite.quaternion.copy(quaternion);
-
-                    const frustumLength = groundSize * Math.tan(theta) / satParms.scale;
-                    frustum = createFrustum(frustumRadius, frustumHeight, frustumLength, satParms.colT0, 'S');
-                    satellite.add(frustum);
-
-                    if (useMultiFrusta) {
-                        satellite.remove(satellite.getObjectByName('frustumL'));
-                        satellite.remove(satellite.getObjectByName('frustumR'));
-                        let col = satParms.colTp1;
-                        if (theta < 0) {
-                            col = satParms.colTm1;
-                        }
-                        const frustumC = createFrustum(frustumRadius, frustumHeight, 0, col, 'C');
-                        satellite.add(frustumC);
-                    }
-                }
-
-                satelliteGroup.add(satellite);
-            }
-
-            satelliteGroup.name = 'satellites';
-
-            scene.add(satelliteGroup);
-
-            resolve();
-        },
-            undefined,
-            function (error) {
-                console.error(`Failed to load satellite model: ${error}`);
-                reject(error);
-            }
-        );
-    });
-}
-*/
 
 async function loadStars(starTex) {
     return new Promise((resolve, reject) => {
@@ -916,6 +779,32 @@ function positionScene(lat, lon, satHeight, rotAngle) {
     controls.update();
 }
 
+function getDefaultCameraRot() {
+    // default camera rotation and offset depend on number of satellites,
+    // this function computes those values
+    const cameraRot = {
+        camDist: 0,
+        camX: 0,
+        camY: 0
+    }
+    const satelliteArg = Math.max((satParms.numSatellites - sceneParms.initSats), 0);
+    if (satelliteArg <= 2) {
+        cameraRot.camDist = sceneParms.offset + (satelliteArg * 0.325);
+    } else {
+        cameraRot.camDist = Math.min(1.8 + (satelliteArg * 0.05), 2.1);
+    }
+
+    if (sceneParms.viewType === 'iso') {
+        cameraRot.camX = Math.min(sceneParms.isoX + (satelliteArg * 5), -14);
+        cameraRot.camY = Math.min(sceneParms.isoY + (satelliteArg * 2.5), -65);
+    } else {
+        cameraRot.camX = Math.min(sceneParms.sideX + (satelliteArg * 2), -8);
+        cameraRot.camY = sceneParms.sideY;
+    }
+    return cameraRot;
+}
+
+
 function initGUI() {
     const gui = new GUI();
 
@@ -977,8 +866,10 @@ function initGUI() {
     const actions = {
         viewIsoProfile: function () {
             // Set propsScene values to iso profile values
-            propsScene.cameraRotX = sceneParms.isoX;
-            propsScene.cameraRotY = sceneParms.isoY;
+            sceneParms.viewType = 'iso';
+            const cameraRot = getDefaultCameraRot()
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
             propsScene.modelLat = sceneParms.isoLat;
             propsScene.modelLon = sceneParms.isoLon;
             propsScene.modelRot = sceneParms.isoRot;
@@ -994,11 +885,16 @@ function initGUI() {
             controllers.modelLat.updateDisplay();
             controllers.modelLon.updateDisplay();
             controllers.modelRot.updateDisplay();
+            controls.target.copy(imagePlane.position);
+
+
         },
         viewSideProfile: function () {
             // Set propsScene values to side profile values
-            propsScene.cameraRotX = sceneParms.sideX;
-            propsScene.cameraRotY = sceneParms.sideY;
+            sceneParms.viewType = 'side';
+            const cameraRot = getDefaultCameraRot()
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
             propsScene.modelLat = sceneParms.sideLat;
             propsScene.modelLon = sceneParms.sideLon;
             propsScene.modelRot = sceneParms.sideRot;
@@ -1018,6 +914,11 @@ function initGUI() {
             if (!useMultiFrusta) {
                 clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
             }
+
+            const targetPos = new THREE.Vector3().copy(imagePlane.position);
+            targetPos.y += satParms.height / 2;
+            controls.target.copy(targetPos);
+
         }
     };
     if (useMultiFrusta) {
@@ -1025,6 +926,12 @@ function initGUI() {
         controllers.cameraDist.updateDisplay();
         clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
         actions.viewSideProfile();
+    } else {
+        if (sceneParms.viewType === 'iso') {
+            actions.viewIsoProfile();
+        } else {
+            actions.viewSideProfile();
+        }
     }
 
     // Add buttons to the GUI
@@ -1171,8 +1078,22 @@ function initGUI() {
     });
 
     const satelliteFolder = gui.addFolder('Satellites');
-    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 1).name('Number of Satellites').onChange(() => {
+    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
+        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
+        if (satParms.numSatellites % 2 === 0) {
+            satParms.numSatellites -= 1;
+        }
         updateSatellites();
+
+        const cameraRot = getDefaultCameraRot()
+        propsScene.cameraDist = cameraRot.camDist;
+        propsScene.cameraRotX = cameraRot.camX;
+        propsScene.cameraRotY = cameraRot.camY;
+        controllers.cameraDist.updateDisplay();
+        controllers.cameraRotX.updateDisplay();
+        controllers.cameraRotY.updateDisplay();
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
     });
 
     gui.add(renderParms, 'fps', 10, 60, 1).onChange(() => {
@@ -1183,7 +1104,6 @@ function initGUI() {
 
     positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
     moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    console.log(satelliteGroup.quaternion);
     const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
     clipPlane.normal.copy(normalDir);
     if (useMultiFrusta) {
@@ -1196,7 +1116,7 @@ function initGUI() {
 }
 
 function fitCameraToObject(camera, object, offset, rotation) {
-    offset = offset || 1.25;
+    offset = offset || propsScene.offset;
 
     const boundingBox = new THREE.Box3();
 
@@ -1247,38 +1167,24 @@ function animate(time) {
 }
 
 function captureCanvasImage() {
-    // Store the current renderer size to go back to it after rendering at target res
-    const originalWidth = renderer.domElement.width;
-    const originalHeight = renderer.domElement.height;
-
-    // render at 4K
-    const targetWidth = 3840;
-    const targetHeight = 2160;
-    renderer.setSize(targetWidth, targetHeight, false);
-    renderer.setPixelRatio(1);
-
-    renderer.render(scene, camera);
-
-    const dataURL = renderer.domElement.toDataURL('image/png');
-    const link = document.createElement('a');
-    link.href = dataURL;
-    link.download = 'tomography_isoview_3840x2160.png';
-    link.click(); // Trigger download
-
-    renderer.setSize(originalWidth, originalHeight, false);
-    renderer.setPixelRatio(window.devicePixelRatio);
-
-    renderer.render(scene, camera);
+    // download a 4k render
+    captureCanvas(3840, 2160);
 }
 
 function captureSquareImage() {
-    // Store the current renderer size to go back to it after rendering at target res
+    // download a 2k square render
+    captureCanvas(2000, 2000);
+}
+
+function captureCanvas(targetWidth, targetHeight) {
+    // Store the current renderer size and aspect ratio to go back to it after
+    // rendering at target res
     const originalWidth = renderer.domElement.width;
     const originalHeight = renderer.domElement.height;
+    const originalAspect = camera.aspect;
 
-    // render at 4K
-    const targetWidth = 2000;
-    const targetHeight = 2000;
+    camera.aspect = targetWidth / targetHeight;
+    camera.updateProjectionMatrix();
     renderer.setSize(targetWidth, targetHeight, false);
     renderer.setPixelRatio(1);
 
@@ -1287,9 +1193,11 @@ function captureSquareImage() {
     const dataURL = renderer.domElement.toDataURL('image/png');
     const link = document.createElement('a');
     link.href = dataURL;
-    link.download = 'tomography_isoview_2000x2000.png';
+    link.download = `tomography_${sceneParms.viewType}view_${targetWidth}x${targetHeight}.png`;
     link.click(); // Trigger download
 
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
     renderer.setSize(originalWidth, originalHeight, false);
     renderer.setPixelRatio(window.devicePixelRatio);
 
