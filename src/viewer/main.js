@@ -17,6 +17,7 @@ const useGltf = true;
 const useBigModel = true;
 const useNormalHelper = false;
 const useMultiFrusta = false;
+const useSimple = true;
 
 let modelDim = 400;
 if (useBigModel) {
@@ -63,8 +64,8 @@ const sceneParms = {
 };
 
 const renderParms = {
-    fps: 10,
-    interval: 100,
+    fps: 30,
+    interval: 1000 / 30,
     lastTime: 0
 };
 
@@ -91,8 +92,6 @@ const cloudParms = {
     opacity: 1.0
 };
 
-const orbitRadius = groundSize + satParms.height;
-
 await init().then(() => {
     for (const child of scene.children) {
         console.log(child);
@@ -103,13 +102,15 @@ await init().then(() => {
         }
         console.log(`Render order: ${child.renderOrder}`);
     }
-
+    if (useSimple) {
+        initGUISimple();
+    } else {
+        initGUI();
+    }
     requestAnimationFrame(animate);
-    initGUI();
 });
 
 async function init() {
-
     container = document.createElement('div');
     document.body.appendChild(container);
 
@@ -829,6 +830,160 @@ function setControlTarget() {
 }
 
 
+
+
+function initGUISimple() {
+    const gui = new GUI();
+
+    // Initial GUI properties set to the iso view
+    const propsScene = {
+        cameraDist: sceneParms.offset,
+        cameraRotX: sceneParms.isoX,
+        cameraRotY: sceneParms.isoY,
+        modelLat: sceneParms.isoLat,
+        modelLon: sceneParms.isoLon,
+        modelRot: sceneParms.isoRot,
+        satHeight: satParms.height
+    };
+    function getCameraRotation() {
+        const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
+        const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
+        return new THREE.Euler(crX, crY, 0, 'XYZ');
+    }
+    const propsLight = {
+        posX: 200.0,
+        posY: 200.0,
+        posZ: -130.0,
+        fillX: -30.0,
+        fillY: 0.0,
+        fillZ: -35.0
+    };
+    function moveLight(posX, posY, posZ) {
+        keyLight.position.set(
+            satelliteGroup.position.x + posX,
+            satelliteGroup.position.y + posY,
+            satelliteGroup.position.z + posZ);
+        keyLight.target = satelliteGroup;
+        fillLight.position.set(
+            satelliteGroup.position.x + propsLight.fillX,
+            satelliteGroup.position.y + propsLight.fillY,
+            satelliteGroup.position.z + propsLight.fillZ);
+        fillLight.target = satelliteGroup;
+    }
+
+    if (useGltf) {
+        function cloudsChanged() {
+            let primary = true;
+            for (let model of cloudGroup.children) {
+                model.traverse((node) => {
+                    if (node instanceof THREE.Points) {
+                        const uniforms = node.material.uniforms;
+                        uniforms['uScale'].value = cloudParms.pointSize;
+                        if (primary) {
+                            uniforms['uCloudColor'].value = cloudParms.color;
+                            primary = false;
+                        } else {
+                            uniforms['uCloudColor'].value = new THREE.Color(0xffffff);
+                        }
+                        uniforms['uCloudOpacity'].value = cloudParms.opacity;
+                    }
+                });
+            }
+            const { position, normal } = getPosition(propsScene.modelLat, propsScene.modelLon);
+            const cloudDisp = normal.clone().multiplyScalar(cloudParms.yOffset);
+            cloudGroup.position.copy(position).add(cloudDisp);
+        }
+        cloudsChanged();
+    }
+
+
+    /* Scene Positioning */
+    const folderScene = gui.addFolder('Camera Angle');
+    // Define action functions for the profiles
+    const actions = {
+        viewIsoProfile: function () {
+            // Set propsScene values to iso profile values
+            sceneParms.viewType = 'iso';
+            const cameraRot = getDefaultCameraRot();
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.isoLat;
+            propsScene.modelLon = sceneParms.isoLon;
+            propsScene.modelRot = sceneParms.isoRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
+
+            if (!useMultiFrusta) {
+                clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+            }
+        },
+        viewSideProfile: function () {
+            // Set propsScene values to side profile values
+            sceneParms.viewType = 'side';
+            const cameraRot = getDefaultCameraRot();
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.sideLat;
+            propsScene.modelLon = sceneParms.sideLon;
+            propsScene.modelRot = sceneParms.sideRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
+
+            if (!useMultiFrusta) {
+                clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+            }
+        }
+    };
+    // Add buttons to the GUI
+    folderScene.add(actions, 'viewIsoProfile').name('View Angled Profile');
+    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
+
+    const satelliteFolder = gui.addFolder('Satellites');
+    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
+        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
+        if (satParms.numSatellites % 2 === 0) {
+            satParms.numSatellites -= 1;
+        }
+        updateSatellites();
+
+        const cameraRot = getDefaultCameraRot()
+        propsScene.cameraDist = cameraRot.camDist;
+        propsScene.cameraRotX = cameraRot.camX;
+        propsScene.cameraRotY = cameraRot.camY;
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+
+    gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Canvas');
+    gui.add({ captureSquare: captureSquareImage }, 'captureSquare').name('Capture Square Image');
+
+    if (useMultiFrusta) {
+        propsScene.cameraDist = 13.5;
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+        actions.viewSideProfile();
+    }
+    positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+    moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
+    clipPlane.normal.copy(normalDir);
+    if (useMultiFrusta) {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+    } else {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+    }
+    fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+    controls.update();
+}
+
+
 function initGUI() {
     const gui = new GUI();
 
@@ -1175,6 +1330,7 @@ function animate(time) {
     // Only render if enough time has passed
     if (delta > renderParms.interval) {
         renderParms.lastTime = time;
+        console.log(scene);
         renderer.render(scene, camera); // Render the scene
     }
 
