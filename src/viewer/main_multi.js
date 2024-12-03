@@ -16,8 +16,7 @@ let sky, keyLight, fillLight, orbitTrack;
 const useGltf = true;
 const useBigModel = true;
 const useNormalHelper = false;
-const useMultiFrusta = false;
-const useSimple = true;
+const useMultiFrusta = true;
 
 let modelDim = 400;
 if (useBigModel) {
@@ -46,7 +45,7 @@ const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
 
 const sceneParms = {
-    offset: 1.25,
+    offset: 12.5,
     isoX: -34,
     isoY: -70,
     isoLat: 81,
@@ -102,11 +101,7 @@ await init().then(() => {
         }
         console.log(`Render order: ${child.renderOrder}`);
     }
-    if (useSimple) {
-        initGUISimple();
-    } else {
-        initGUI();
-    }
+    initGUISimple();
     requestAnimationFrame(animate);
 });
 
@@ -943,337 +938,16 @@ function initGUISimple() {
         }
     };
     // Add buttons to the GUI
-    folderScene.add(actions, 'viewIsoProfile').name('View Angled Profile');
-    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
+    //folderScene.add(actions, 'viewIsoProfile').name('View Angled Profile');
+    folderScene.add(actions, 'viewSideProfile').name('Reset Viewing Angle');
 
-    const satelliteFolder = gui.addFolder('Satellites');
-    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
-        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
-        if (satParms.numSatellites % 2 === 0) {
-            satParms.numSatellites -= 1;
-        }
-        updateSatellites();
-
-        const cameraRot = getDefaultCameraRot()
-        propsScene.cameraDist = cameraRot.camDist;
-        propsScene.cameraRotX = cameraRot.camX;
-        propsScene.cameraRotY = cameraRot.camY;
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-
-
-    gui.add({ viewMulti: openMultiAnglePage }, 'viewMulti').name('View Multi-Angle Mode');
     gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Widescreen Image');
     gui.add({ captureSquare: captureSquareImage }, 'captureSquare').name('Capture Square Image');
 
     if (useMultiFrusta) {
-        propsScene.cameraDist = 13.5;
         clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
         actions.viewSideProfile();
     }
-    positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-    moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
-    clipPlane.normal.copy(normalDir);
-    if (useMultiFrusta) {
-        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
-    } else {
-        clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
-    }
-    fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-    controls.update();
-}
-
-
-function initGUI() {
-    const gui = new GUI();
-
-    /* Scene Positioning */
-    const folderScene = gui.addFolder('Scene Positioning');
-
-    // Initial GUI properties set to the iso view
-    const propsScene = {
-        cameraDist: sceneParms.offset,
-        cameraRotX: sceneParms.isoX,
-        cameraRotY: sceneParms.isoY,
-        modelLat: sceneParms.isoLat,
-        modelLon: sceneParms.isoLon,
-        modelRot: sceneParms.isoRot,
-        satHeight: satParms.height
-    };
-
-    const controllers = {}; // Object to store GUI controllers
-
-    function getCameraRotation() {
-        const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
-        const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
-        return new THREE.Euler(crX, crY, 0, 'XYZ');
-    }
-
-    // Store each controller reference
-    controllers.cameraDist = folderScene.add(propsScene, 'cameraDist', 0.1, 30, 0.05).onChange(() => {
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-    controllers.cameraRotX = folderScene.add(propsScene, 'cameraRotX', -180, 180, 1).onChange(() => {
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-    controllers.cameraRotY = folderScene.add(propsScene, 'cameraRotY', -180, 180, 1).onChange(() => {
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-    controllers.modelLat = folderScene.add(propsScene, 'modelLat', -90, 90, 1).onChange(() => {
-        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-    controllers.modelLon = folderScene.add(propsScene, 'modelLon', -180, 180, 1).onChange(() => {
-        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-    controllers.modelRot = folderScene.add(propsScene, 'modelRot', -45, 45, 0.1).onChange(() => {
-        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-        controls.update();
-    });
-    controllers.satHeight = folderScene.add(propsScene, 'satHeight', 0, 1, 0.01).onChange(() => {
-        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight);
-        controls.update();
-    });
-
-    const folderClip = gui.addFolder('Clip Plane');
-    const propsClip = {
-        get 'enabled'() {
-            return renderer.localClippingEnabled;
-        },
-        set 'enabled'(v) {
-            renderer.localClippingEnabled = v;
-        },
-        get 'axis'() {
-            if (clipPlaneAxis.x === -1) {
-                return 'X';
-            }
-            else if (clipPlaneAxis.y === -1) {
-                return 'Y';
-            }
-            else if (clipPlaneAxis.z === -1) {
-                return 'Z';
-            }
-        },
-        set 'axis'(v) {
-            switch (v) {
-                case 'X':
-                    clipPlaneAxis.set(-1, 0, 0);
-                    break;
-                case 'Y':
-                    clipPlaneAxis.set(0, -1, 0);
-                    break;
-                case 'Z':
-                    clipPlaneAxis.set(0, 0, -1);
-                    break;
-            }
-            const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
-            clipPlane.normal.copy(normalDir);
-        },
-        get 'planePosition'() {
-            let imagePos;
-            switch (propsClip.axis) {
-                case 'X':
-                    imagePos = cloudGroup.position.x;
-                    break;
-                case 'Y':
-                    imagePos = cloudGroup.position.y;
-                    break;
-                case 'Z':
-                    imagePos = cloudGroup.position.z;
-                    break;
-            }
-            return clipPlane.constant - imagePos;
-        },
-        set 'planePosition'(v) {
-            let imagePos;
-            switch (propsClip.axis) {
-                case 'X':
-                    imagePos = cloudGroup.position.x;
-                    break;
-                case 'Y':
-                    imagePos = cloudGroup.position.y;
-                    break;
-                case 'Z':
-                    imagePos = cloudGroup.position.z;
-                    break;
-            }
-            clipPlane.constant = imagePos + v;
-        },
-    };
-    folderClip.add(propsClip, 'enabled');
-    folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
-    controllers.planePosition = folderClip.add(propsClip, 'planePosition', -10.0, 10.0, 0.01);
-
-    // Define action functions for the profiles
-    const actions = {
-        viewIsoProfile: function () {
-            // Set propsScene values to iso profile values
-            sceneParms.viewType = 'iso';
-            const cameraRot = getDefaultCameraRot()
-            propsScene.cameraRotX = cameraRot.camX;
-            propsScene.cameraRotY = cameraRot.camY;
-            propsScene.modelLat = sceneParms.isoLat;
-            propsScene.modelLon = sceneParms.isoLon;
-            propsScene.modelRot = sceneParms.isoRot;
-
-            // Update the scene
-            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-            setControlTarget();
-            setSatelliteRenderOrder(satParms.numSatellites);
-
-            // Update the GUI controllers to reflect the new values
-            controllers.cameraRotX.updateDisplay();
-            controllers.cameraRotY.updateDisplay();
-            controllers.modelLat.updateDisplay();
-            controllers.modelLon.updateDisplay();
-            controllers.modelRot.updateDisplay();
-            if (!useMultiFrusta) {
-                controllers.planePosition.setValue(sceneParms.isoClipPos);
-                controllers.planePosition.updateDisplay();
-            }
-        },
-        viewSideProfile: function () {
-            // Set propsScene values to side profile values
-            sceneParms.viewType = 'side';
-            const cameraRot = getDefaultCameraRot()
-            propsScene.cameraRotX = cameraRot.camX;
-            propsScene.cameraRotY = cameraRot.camY;
-            propsScene.modelLat = sceneParms.sideLat;
-            propsScene.modelLon = sceneParms.sideLon;
-            propsScene.modelRot = sceneParms.sideRot;
-
-            // Update the scene
-            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
-            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-            setControlTarget();
-            setSatelliteRenderOrder(satParms.numSatellites);
-
-            // Update the GUI controllers to reflect the new values
-            controllers.cameraRotX.updateDisplay();
-            controllers.cameraRotY.updateDisplay();
-            controllers.modelLat.updateDisplay();
-            controllers.modelLon.updateDisplay();
-            controllers.modelRot.updateDisplay();
-            if (!useMultiFrusta) {
-                controllers.planePosition.setValue(sceneParms.isoClipPos);
-                controllers.planePosition.updateDisplay();
-            }
-        }
-    };
-    if (useMultiFrusta) {
-        propsScene.cameraDist = 13.5;
-        controllers.cameraDist.updateDisplay();
-        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
-        actions.viewSideProfile();
-    }
-    // Add buttons to the GUI
-    folderScene.add(actions, 'viewIsoProfile').name('View Iso Profile');
-    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
-
-    const folderCloud = gui.addFolder('Cloud Parameters');
-    if (useGltf) {
-        function cloudsChanged() {
-            let primary = true;
-            for (let model of cloudGroup.children) {
-                model.traverse((node) => {
-                    if (node instanceof THREE.Points) {
-                        const uniforms = node.material.uniforms;
-                        uniforms['uScale'].value = cloudParms.pointSize;
-                        if (primary) {
-                            uniforms['uCloudColor'].value = cloudParms.color;
-                            primary = false;
-                        } else {
-                            uniforms['uCloudColor'].value = new THREE.Color(0xffffff);
-                        }
-                        uniforms['uCloudOpacity'].value = cloudParms.opacity;
-                    }
-                });
-            }
-            const { position, normal } = getPosition(propsScene.modelLat, propsScene.modelLon);
-            const cloudDisp = normal.clone().multiplyScalar(cloudParms.yOffset);
-            cloudGroup.position.copy(position).add(cloudDisp);
-        }
-        folderCloud.add(cloudParms, 'pointSize', 0.1, 10, 0.1).onChange(cloudsChanged);
-        folderCloud.add(cloudParms, 'yOffset', -0.2, 0.2, 0.01).onChange(cloudsChanged);
-        folderCloud.addColor(cloudParms, 'color').onChange(cloudsChanged);
-        folderCloud.add(cloudParms, 'opacity', 0.0, 1.0, 0.01).onChange(cloudsChanged);
-        cloudsChanged();
-    }
-
-    const folderLight = gui.addFolder('Light Position');
-    const propsLight = {
-        posX: 200.0,
-        posY: 200.0,
-        posZ: -130.0,
-        fillX: -30.0,
-        fillY: 0.0,
-        fillZ: -35.0
-    };
-    function moveLight(posX, posY, posZ) {
-        keyLight.position.set(
-            satelliteGroup.position.x + posX,
-            satelliteGroup.position.y + posY,
-            satelliteGroup.position.z + posZ);
-        keyLight.target = satelliteGroup;
-        fillLight.position.set(
-            satelliteGroup.position.x + propsLight.fillX,
-            satelliteGroup.position.y + propsLight.fillY,
-            satelliteGroup.position.z + propsLight.fillZ);
-        fillLight.target = satelliteGroup;
-    }
-    folderLight.add(propsLight, 'posX', 0, 200, 1).onChange(() => {
-        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    });
-    folderLight.add(propsLight, 'posY', 200, 300, 1).onChange(() => {
-        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    });
-    folderLight.add(propsLight, 'posZ', -300, 0, 1).onChange(() => {
-        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    });
-    folderLight.add(propsLight, 'fillX', -200, 200, 1).onChange(() => {
-        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    });
-    folderLight.add(propsLight, 'fillY', -10, 10, 1).onChange(() => {
-        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    });
-    folderLight.add(propsLight, 'fillZ', -50, 50, 1).onChange(() => {
-        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
-    });
-
-    const satelliteFolder = gui.addFolder('Satellites');
-    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
-        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
-        if (satParms.numSatellites % 2 === 0) {
-            satParms.numSatellites -= 1;
-        }
-        updateSatellites();
-
-        const cameraRot = getDefaultCameraRot()
-        propsScene.cameraDist = cameraRot.camDist;
-        propsScene.cameraRotX = cameraRot.camX;
-        propsScene.cameraRotY = cameraRot.camY;
-        controllers.cameraDist.updateDisplay();
-        controllers.cameraRotX.updateDisplay();
-        controllers.cameraRotY.updateDisplay();
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-
-    gui.add(renderParms, 'fps', 10, 60, 1).onChange(() => {
-        renderParms.interval = 1000 / renderParms.fps;
-    });
-    gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Canvas');
-    gui.add({ captureSquare: captureSquareImage }, 'captureSquare').name('Capture Square Image');
-
     positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
     moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
     const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
@@ -1337,10 +1011,6 @@ function animate(time) {
     }
 
     requestAnimationFrame(animate);
-}
-
-function openMultiAnglePage() {
-    window.open('/multiangle.html', '_blank');
 }
 
 function captureCanvasImage() {
