@@ -82,7 +82,8 @@ const satParms = {
     colDft: 0x00ff00,
     numSatellites: sceneParms.initSats,
     minSatellites: 1,
-    maxSatellites: 11
+    maxSatellites: 11,
+    pos: 0
 };
 
 const cloudParms = {
@@ -268,14 +269,16 @@ async function loadGLTF(modelName) {
                 // Add the original model to the scene
                 cloudGroup.add(cloudModel);
 
-                // Create the clone and share geometries and materials
-                const cloudModelClone = cloneModelSharingGeometryAndMaterials(cloudModel);
+                // Create the clones and share geometries and materials
+                for (let offset = -2; offset < 3; offset++) {
+                    if (offset == 0) {
+                        continue;
+                    }
+                    const cloudModelClone = cloneModelSharingGeometryAndMaterials(cloudModel);
+                    cloudModelClone.position.x = offset;
 
-                // Offset the clone by -1 * modelDim in X direction (after scaling, this is -1)
-                cloudModelClone.position.x = -1;
-
-                // Add the clone to the scene
-                cloudGroup.add(cloudModelClone);
+                    cloudGroup.add(cloudModelClone);
+                }
                 scene.add(cloudGroup);
 
                 resolve();
@@ -871,6 +874,8 @@ function initGUISimple() {
         fillLight.target = satelliteGroup;
     }
 
+    const controllers = {};
+
     if (useGltf) {
         function cloudsChanged() {
             let primary = true;
@@ -899,6 +904,52 @@ function initGUISimple() {
 
     /* Scene Positioning */
     const folderScene = gui.addFolder('Camera Angle');
+
+    const satelliteFolder = gui.addFolder('Satellites');
+    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
+        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
+        if (satParms.numSatellites % 2 === 0) {
+            satParms.numSatellites -= 1;
+        }
+        updateSatellites();
+
+        const cameraRot = getDefaultCameraRot()
+        propsScene.cameraDist = cameraRot.camDist;
+        propsScene.cameraRotX = cameraRot.camX;
+        propsScene.cameraRotY = cameraRot.camY;
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+
+    const updateSatPositions = (position) => {
+        const scaledPos = -position / 500;
+        const angle = (scaledPos + 0.25) * Math.PI * 2;
+
+        const orbitRadius = groundSize + satParms.height;
+        const x = orbitRadius * Math.cos(angle);
+        const y = orbitRadius * Math.sin(angle);
+        const z = 0;
+
+        const pos = new THREE.Vector3(x, y, z);
+        pos.applyEuler(orbitTrack.rotation);
+        pos.add(orbitTrack.position);
+
+        satelliteGroup.position.copy(pos);
+
+        const center = orbitTrack.position.clone();
+        const direction = center.sub(pos).normalize();
+
+        const quaternion = new THREE.Quaternion();
+        const initialDir = new THREE.Vector3(0, -1, 0);
+        quaternion.setFromUnitVectors(initialDir, direction);
+
+        satelliteGroup.setRotationFromQuaternion(quaternion);
+
+        clipPlane.constant = cloudGroup.position.x - (Math.sin(angle - Math.PI / 2) * 100);
+    };
+
+    controllers.satPos = satelliteFolder.add(satParms, 'pos', -2, 2, 0.1).onChange(updateSatPositions).name('Time Step');
+
     // Define action functions for the profiles
     const actions = {
         viewIsoProfile: function () {
@@ -920,6 +971,8 @@ function initGUISimple() {
             if (!useMultiFrusta) {
                 clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
             }
+            satParms.pos = 0;
+            controllers.satPos.updateDisplay();
         },
         viewSideProfile: function () {
             // Set propsScene values to side profile values
@@ -940,28 +993,13 @@ function initGUISimple() {
             if (!useMultiFrusta) {
                 clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
             }
+            satParms.pos = 0;
+            controllers.satPos.updateDisplay();
         }
     };
     // Add buttons to the GUI
     folderScene.add(actions, 'viewIsoProfile').name('View Angled Profile');
     folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
-
-    const satelliteFolder = gui.addFolder('Satellites');
-    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
-        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
-        if (satParms.numSatellites % 2 === 0) {
-            satParms.numSatellites -= 1;
-        }
-        updateSatellites();
-
-        const cameraRot = getDefaultCameraRot()
-        propsScene.cameraDist = cameraRot.camDist;
-        propsScene.cameraRotX = cameraRot.camX;
-        propsScene.cameraRotY = cameraRot.camY;
-        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
-        controls.update();
-    });
-
 
     gui.add({ viewMulti: openMultiAnglePage }, 'viewMulti').name('View Multi-Angle Mode');
     gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Widescreen Image');
@@ -1293,7 +1331,21 @@ function fitCameraToObject(camera, object, offset, rotation) {
     const boundingBox = new THREE.Box3();
 
     // get bounding box of object - this will be used to setup controls and camera
-    boundingBox.setFromObject(object);
+    // the jank here is because using cloudGroup is kind of messed up for determining
+    // the camera position. If I add more clones, the camera positioning offset values
+    // are no longer accurate.
+    if (object.children && object.children.length >= 2) {
+        const box1 = new THREE.Box3().setFromObject(object.children[0]);
+        const box2 = new THREE.Box3();
+        for (const child of object.children) {
+            if (child.position.x === -1) {
+                box2.setFromObject(child);
+            }
+        }
+        boundingBox.union(box1).union(box2);
+    } else {
+        boundingBox.setFromObject(object);
+    }
 
     const dummy = new THREE.Vector3();
     const size = boundingBox.getSize(dummy);
@@ -1332,7 +1384,6 @@ function animate(time) {
     // Only render if enough time has passed
     if (delta > renderParms.interval) {
         renderParms.lastTime = time;
-        console.log(scene);
         renderer.render(scene, camera); // Render the scene
     }
 
