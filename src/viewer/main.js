@@ -701,7 +701,7 @@ function setSatelliteRenderOrder(numSatellites) {
 
 function computePhi(theta) {
     const R = groundSize;
-    const h = satParms.height * 4;
+    const h = satParms.height;
 
     const sinThetaSquared = Math.sin(theta) ** 2;
     const cosTheta = Math.cos(theta);
@@ -932,7 +932,7 @@ function initGUISimple() {
         const thetaRad = satParms.maxTheta * Math.PI / 180.0;
         const phiRad = computePhi(thetaRad);
         if (satParms.numSatellites > 1) {
-            satParms.spacing = phiRad / (satParms.numSatellites - 1) / 2;
+            satParms.spacing = 2 * phiRad / (satParms.numSatellites - 1);
         } else {
             satParms.spacing = phiRad;
         }
@@ -978,7 +978,7 @@ function initGUISimple() {
         const thetaRad = satParms.maxTheta * Math.PI / 180.0;
         const phiRad = computePhi(thetaRad);
         if (satParms.numSatellites > 1) {
-            satParms.spacing = phiRad / (satParms.numSatellites - 1) / 2;
+            satParms.spacing = 2 * phiRad / (satParms.numSatellites - 1);
         } else {
             satParms.spacing = phiRad;
         }
