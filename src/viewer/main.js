@@ -575,6 +575,7 @@ function createSatellites(numSatellites) {
             // Experimentally derived way to slightly adjust the frustum component down for satellites
             // that are further out. This makes the line where the frusta meet line up visually. 
             const frustumAdjustment = -0.2 * (Math.abs(frustumLength) - 25) / 25;
+            //const frustumAdjustment = 0;
             const vertices = new Float32Array([
                 0, -1, 0,
                 -frustumRadius / 2, -frustumHeight + frustumAdjustment, -frustumLength,
@@ -973,7 +974,7 @@ function initGUISimple() {
     };
 
     controllers.satPos = satelliteFolder.add(satParms, 'pos', -2, 2, 0.1).onChange(updateSatPositions).name('Time Step');
-    satelliteFolder.add(satParms, 'maxTheta', 10, 60).onChange(() => {
+    satelliteFolder.add(satParms, 'maxTheta', 15, 75).onChange(() => {
         const thetaRad = satParms.maxTheta * Math.PI / 180.0;
         const phiRad = computePhi(thetaRad);
         if (satParms.numSatellites > 1) {
