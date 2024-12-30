@@ -72,7 +72,7 @@ const renderParms = {
 const satParms = {
     scale: 0.02,
     height: 0.4,
-    spacing: 0.005,
+    spacing: 0.003906643756115759,
     colT0: 0x00ff00,
     colTm1: 0x0000ff,
     colTp1: 0x0000ff,
@@ -83,7 +83,8 @@ const satParms = {
     numSatellites: sceneParms.initSats,
     minSatellites: 1,
     maxSatellites: 11,
-    pos: 0
+    pos: 0,
+    maxTheta: 45
 };
 
 const cloudParms = {
@@ -551,7 +552,8 @@ function createSatellites(numSatellites) {
 
     const modelUp = new THREE.Vector3(0, 1, 0);
     const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, modelUp);
-    const satSpacing = Math.max(satParms.spacing - 0.0005 * Math.max(numSatellites - 5, 0), 0.0025);
+    //const satSpacing = Math.max(satParms.spacing - 0.0005 * Math.max(numSatellites - 5, 0), 0.0025);
+    const satSpacing = satParms.spacing;
 
     if (!orbitTrack) {
         orbitTrack = createCircle(orbitRadius, 1024, 0xffffff);
@@ -566,7 +568,7 @@ function createSatellites(numSatellites) {
     // Loop to create satellites along the orbitTrack
     for (let i = 0; i < numSatellites; i++) {
         let satellite, frustum;
-        const theta = (i - (numSatellites - 1) / 2) * satSpacing;
+        const phi = (i - (numSatellites - 1) / 2) * satSpacing;
 
         const createFrustum = (frustumRadius, frustumHeight, frustumLength, col, id) => {
             const frustumGeo = new THREE.BufferGeometry();
@@ -595,7 +597,7 @@ function createSatellites(numSatellites) {
             return frustumMesh;
         };
 
-        if (theta === 0) {
+        if (phi === 0) {
             satellite = satModel.clone();
             satellite.remove(satellite.getObjectByName('frustumC'));
             if (useMultiFrusta) {
@@ -614,8 +616,8 @@ function createSatellites(numSatellites) {
             satellite = satModel.clone();
             satellite.remove(satellite.getObjectByName('frustumC'));
 
-            const x = orbitRadius * Math.sin(theta);
-            const y = orbitRadius * Math.cos(theta);
+            const x = orbitRadius * Math.sin(phi);
+            const y = orbitRadius * Math.cos(phi);
             const position = new THREE.Vector3(x, y, 0);
 
             position.applyQuaternion(modelQuat);
@@ -634,7 +636,7 @@ function createSatellites(numSatellites) {
             const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
             satellite.quaternion.copy(quaternion);
 
-            const frustumLength = groundSize * Math.tan(theta) / satParms.scale;
+            const frustumLength = groundSize * Math.tan(phi) / satParms.scale;
             frustum = createFrustum(frustumRadius, frustumHeight, frustumLength, satParms.colT0, 'S');
             satellite.add(frustum);
 
@@ -642,7 +644,7 @@ function createSatellites(numSatellites) {
                 satellite.remove(satellite.getObjectByName('frustumL'));
                 satellite.remove(satellite.getObjectByName('frustumR'));
                 let col = satParms.colTp1;
-                if (theta < 0) {
+                if (phi < 0) {
                     col = satParms.colTm1;
                 }
                 const frustumC = createFrustum(frustumRadius, frustumHeight, 0, col, 'C');
@@ -696,6 +698,21 @@ function setSatelliteRenderOrder(numSatellites) {
     }
 }
 
+function computePhi(theta) {
+    const R = groundSize;
+    const h = satParms.height * 4;
+
+    const sinThetaSquared = Math.sin(theta) ** 2;
+    const cosTheta = Math.cos(theta);
+    const sqrtTerm = Math.sqrt(R ** 2 * cosTheta ** 2 + h * (2 * R + h));
+    const numerator = R * sinThetaSquared + cosTheta * sqrtTerm;
+    const denominator = R + h;
+
+    const phi = Math.acos(numerator / denominator);
+
+    return phi;
+}
+
 async function loadStars(starTex) {
     return new Promise((resolve, reject) => {
         new THREE.TextureLoader().load(starTex, function (texture) {
@@ -725,9 +742,9 @@ function createCircle(radius, segments, color) {
     const positions = [];
 
     for (let i = 0; i <= segments; i++) {
-        const theta = (i / segments) * Math.PI * 2;
-        const x = radius * Math.cos(theta);
-        const y = radius * Math.sin(theta);
+        const phi = (i / segments) * Math.PI * 2;
+        const x = radius * Math.cos(phi);
+        const y = radius * Math.sin(phi);
         const z = 0; // Circle lies in the XY plane
         positions.push(x, y, z);
     }
@@ -911,6 +928,13 @@ function initGUISimple() {
         if (satParms.numSatellites % 2 === 0) {
             satParms.numSatellites -= 1;
         }
+        const thetaRad = satParms.maxTheta * Math.PI / 180.0;
+        const phiRad = computePhi(thetaRad);
+        if (satParms.numSatellites > 1) {
+            satParms.spacing = phiRad / (satParms.numSatellites - 1) / 2;
+        } else {
+            satParms.spacing = phiRad;
+        }
         updateSatellites();
 
         const cameraRot = getDefaultCameraRot()
@@ -949,6 +973,16 @@ function initGUISimple() {
     };
 
     controllers.satPos = satelliteFolder.add(satParms, 'pos', -2, 2, 0.1).onChange(updateSatPositions).name('Time Step');
+    satelliteFolder.add(satParms, 'maxTheta', 10, 60).onChange(() => {
+        const thetaRad = satParms.maxTheta * Math.PI / 180.0;
+        const phiRad = computePhi(thetaRad);
+        if (satParms.numSatellites > 1) {
+            satParms.spacing = phiRad / (satParms.numSatellites - 1) / 2;
+        } else {
+            satParms.spacing = phiRad;
+        }
+        updateSatellites();
+    })
 
     // Define action functions for the profiles
     const actions = {
