@@ -8,6 +8,11 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
+
+function degToRad(deg) {
+    return deg * Math.PI / 180.0;
+}
+
 let container, camera, controls, scene, renderer;
 let cloudGroup, imagePlane, ground, satelliteGroup, satModel; //, atm;
 let clipPlane, clipPlaneAxis;
@@ -73,6 +78,7 @@ const satParms = {
     scale: 0.02,
     height: 0.4,
     spacing: 0.003906643756115759,
+    //spacing: 0.010786503244046407,
     colT0: 0x00ff00,
     colTm1: 0x0000ff,
     colTp1: 0x0000ff,
@@ -84,7 +90,10 @@ const satParms = {
     minSatellites: 1,
     maxSatellites: 11,
     pos: 0,
-    maxTheta: 45
+    maxTheta: 45,
+    //maxTheta: 70,
+    // a normal altitude for a cubesat deployed from ISS
+    realH: 400
 };
 
 const cloudParms = {
@@ -93,6 +102,72 @@ const cloudParms = {
     color: new THREE.Color(0xffffff),
     opacity: 1.0
 };
+
+
+// Create the legend container
+const legendContainer = document.createElement('div');
+legendContainer.style.position = 'absolute';
+legendContainer.style.top = '20px';
+legendContainer.style.left = '20px';
+legendContainer.style.padding = '15px';
+legendContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.7)';
+legendContainer.style.color = 'black';
+legendContainer.style.fontFamily = 'CMU Serif, Times New Roman, serif';
+legendContainer.style.fontSize = '24px';
+legendContainer.style.borderRadius = '8px';
+legendContainer.style.zIndex = '1000';
+legendContainer.style.pointerEvents = 'none';
+
+function computePhi(theta, N, R, h) {
+    const sinThetaSquared = Math.sin(theta) ** 2;
+    const cosTheta = Math.cos(theta);
+    const sqrtTerm = Math.sqrt(R ** 2 * cosTheta ** 2 + h * (2 * R + h));
+    const numerator = R * sinThetaSquared + cosTheta * sqrtTerm;
+    const denominator = R + h;
+
+    const phiAll = Math.acos(numerator / denominator);
+
+    let phi = phiAll;
+    if (N > 1) {
+        phi = 2 * phiAll / (N - 1);
+    }
+
+    return phi;
+}
+
+console.log(`phi = ${computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, groundSize, satParms.height)}`);
+
+function computeDs(phi) {
+    const R_E = 6371;
+    const R = R_E + satParms.realH;
+    const L = 2 * R * Math.sin(phi / 2);
+    return L;
+}
+
+function updateLegend(n, theta, ds) {
+    legendContainer.innerHTML = `
+N = ${n}<br>
+\\(\\theta = ${theta}°\\)<br>
+\\(d_s = ${ds.toFixed(1)}\\) km<br>
+\\(h = ${satParms.realH}\\) km
+    `.trim();
+
+    // Retypeset the math
+    if (window.MathJax) {
+        MathJax.typesetPromise([legendContainer]);
+    }
+}
+
+/*
+function updateLegend(n, theta, ds) {
+    legendContainer.innerHTML = `
+N = ${n}
+θ = ${theta}°
+d<sub>s</sub> = ${ds.toFixed(1)} km
+h = ${satParms.realH} km
+    `.trim().split('\n').join('<br>');
+}
+*/
 
 await init().then(() => {
     for (const child of scene.children) {
@@ -109,7 +184,10 @@ await init().then(() => {
     } else {
         initGUI();
     }
+
     requestAnimationFrame(animate);
+    document.body.appendChild(legendContainer);
+    updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
 });
 
 async function init() {
@@ -699,21 +777,6 @@ function setSatelliteRenderOrder(numSatellites) {
     }
 }
 
-function computePhi(theta) {
-    const R = groundSize;
-    const h = satParms.height;
-
-    const sinThetaSquared = Math.sin(theta) ** 2;
-    const cosTheta = Math.cos(theta);
-    const sqrtTerm = Math.sqrt(R ** 2 * cosTheta ** 2 + h * (2 * R + h));
-    const numerator = R * sinThetaSquared + cosTheta * sqrtTerm;
-    const denominator = R + h;
-
-    const phi = Math.acos(numerator / denominator);
-
-    return phi;
-}
-
 async function loadStars(starTex) {
     return new Promise((resolve, reject) => {
         new THREE.TextureLoader().load(starTex, function (texture) {
@@ -850,9 +913,6 @@ function setControlTarget() {
     controls.update();
 }
 
-
-
-
 function initGUISimple() {
     const gui = new GUI();
 
@@ -929,13 +989,7 @@ function initGUISimple() {
         if (satParms.numSatellites % 2 === 0) {
             satParms.numSatellites -= 1;
         }
-        const thetaRad = satParms.maxTheta * Math.PI / 180.0;
-        const phiRad = computePhi(thetaRad);
-        if (satParms.numSatellites > 1) {
-            satParms.spacing = 2 * phiRad / (satParms.numSatellites - 1);
-        } else {
-            satParms.spacing = phiRad;
-        }
+        satParms.spacing = computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, groundSize, satParms.height);
         updateSatellites();
 
         const cameraRot = getDefaultCameraRot()
@@ -944,6 +998,8 @@ function initGUISimple() {
         propsScene.cameraRotY = cameraRot.camY;
         fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
         controls.update();
+
+        updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
     });
 
     const updateSatPositions = (position) => {
@@ -975,14 +1031,10 @@ function initGUISimple() {
 
     controllers.satPos = satelliteFolder.add(satParms, 'pos', -2, 2, 0.1).onChange(updateSatPositions).name('Time Step');
     satelliteFolder.add(satParms, 'maxTheta', 15, 75).onChange(() => {
-        const thetaRad = satParms.maxTheta * Math.PI / 180.0;
-        const phiRad = computePhi(thetaRad);
-        if (satParms.numSatellites > 1) {
-            satParms.spacing = 2 * phiRad / (satParms.numSatellites - 1);
-        } else {
-            satParms.spacing = phiRad;
-        }
+        satParms.spacing = computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, groundSize, satParms.height);
         updateSatellites();
+
+        updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
     })
 
     // Define action functions for the profiles
@@ -1056,6 +1108,8 @@ function initGUISimple() {
     }
     fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
     controls.update();
+
+    updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
 }
 
 
@@ -1429,16 +1483,17 @@ function openMultiAnglePage() {
     window.open('/multiangle.html', '_blank');
 }
 
-function captureCanvasImage() {
+async function captureCanvasImage() {
     // download a 4k render
-    captureCanvas(3840, 2160);
+    await captureCanvas(3840, 2160);
 }
 
-function captureSquareImage() {
+async function captureSquareImage() {
     // download a 2k square render
-    captureCanvas(2000, 2000);
+    await captureCanvas(2000, 2000);
 }
 
+/*
 function captureCanvas(targetWidth, targetHeight) {
     // Store the current renderer size and aspect ratio to go back to it after
     // rendering at target res
@@ -1466,3 +1521,198 @@ function captureCanvas(targetWidth, targetHeight) {
 
     renderer.render(scene, camera);
 }
+*/
+
+async function html2svg(element) {
+    // Clone the element and remove positioning
+    const clone = element.cloneNode(true);
+    clone.style.position = '';
+    clone.style.left = '';
+
+    const data = clone.outerHTML;
+    const styles = document.head.getElementsByTagName('style');
+    const mathJaxStyles = Array.from(styles)
+        .filter(style => style.id.includes('MJX-SVG-styles'))
+        .map(style => style.outerHTML)
+        .join('');
+
+    const svgContent = `
+        <svg xmlns="http://www.w3.org/2000/svg" 
+             xmlns:xhtml="http://www.w3.org/1999/xhtml"
+             width="${element.offsetWidth + 100}" 
+             height="${element.offsetHeight}">
+            <foreignObject width="100%" height="100%">
+                <xhtml:div xmlns="http://www.w3.org/1999/xhtml">
+                    ${mathJaxStyles}
+                    ${data}
+                </xhtml:div>
+            </foreignObject>
+        </svg>`;
+
+    //const link = document.createElement('a');
+    //link.href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgContent)}`;
+    //link.download = 'debug.svg';
+    //link.click();
+
+    return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgContent)))}`;
+}
+
+async function captureCanvas(targetWidth, targetHeight) {
+    const originalWidth = renderer.domElement.width;
+    const originalHeight = renderer.domElement.height;
+    const originalAspect = camera.aspect;
+
+    camera.aspect = targetWidth / targetHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(targetWidth, targetHeight, false);
+    renderer.setPixelRatio(1);
+
+    renderer.render(scene, camera);
+
+    // Create final canvas
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = targetWidth;
+    finalCanvas.height = targetHeight;
+    const ctx = finalCanvas.getContext('2d');
+
+    // Draw the WebGL canvas
+    ctx.drawImage(renderer.domElement, 0, 0);
+
+    // Create temporary div for MathJax
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.left = '-9999px';
+    document.body.appendChild(tempDiv);
+
+    // Calculate font size dynamically for the resolution
+    // Use 3% the window width and clamp to a max font size of 72
+    const baseFontSize = Math.min(targetWidth, targetHeight) * 0.03;
+    const fontSize = Math.max(14, Math.min(72, baseFontSize));
+
+    // Set content with MathJax formatting
+    const ds = computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH))
+    tempDiv.innerHTML = `
+        <div style="font-size: ${fontSize}px; color: black;">
+            <div>N = ${satParms.numSatellites}</div>
+            <div>\\(\\theta = ${satParms.maxTheta}°\\)</div>
+            <div>\\(d_s = ${ds.toFixed(1)}\\) km</div>
+            <div>\\(h = ${satParms.realH}\\) km</div>
+        </div>
+    `;
+
+    // Get rendered size
+    const padding = fontSize * 0.8;
+    const box = tempDiv.getBoundingClientRect();
+    const boxWidth = box.width + (padding * 2);
+    const boxHeight = box.height + (padding * 2);
+
+    // Draw background
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.roundRect(padding, padding, boxWidth, boxHeight, padding);
+    ctx.fill();
+
+    // Wait for MathJax to process
+    await MathJax.typesetPromise([tempDiv]);
+    const svgUrl = await html2svg(tempDiv);
+    //const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    //const svgUrl = URL.createObjectURL(svgBlob);
+
+    // Create and load image
+    const loadImage = () => {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => resolve(img);
+            img.onerror = (e) => {
+                console.error('Image load error:', e);
+                console.log('SVG content:', svg); // Add this to inspect the SVG
+                reject(e);
+            };
+            img.src = svgUrl;
+        });
+    };
+
+    const svgImage = await loadImage();
+    ctx.drawImage(svgImage, padding * 2, padding * 2);
+
+    // Export
+    const dataURL = finalCanvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = `tomography_${sceneParms.viewType}view_${targetWidth}x${targetHeight}.png`;
+    link.click();
+
+    // Clean up
+    URL.revokeObjectURL(svgUrl);
+    document.body.removeChild(tempDiv);
+
+    // Restore settings
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
+    renderer.setSize(originalWidth, originalHeight, false);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    renderer.render(scene, camera);
+
+    /*
+    // Legend canvas setup
+    const legendCanvas = document.createElement('canvas');
+    legendCanvas.width = targetWidth;
+    legendCanvas.height = targetHeight;
+    const legendCtx = legendCanvas.getContext('2d');
+
+    // Configure font size based on resolution
+    const baseFontSize = Math.min(targetWidth, targetHeight) * 0.03; // 3% of smallest dimension
+    const fontSize = Math.max(14, Math.min(72, baseFontSize)); // Clamp between 14 and 72
+    legendCtx.font = `${fontSize}px "CMU Serif"`;
+
+    // Calculate text dimensions
+    const padding = fontSize * 0.8;
+    const lineSpacing = fontSize * 1.4;
+    const legendContent = legendContainer.textContent.split('\n');
+
+    // Measure text width to determine box size
+    const textWidths = legendContent.map(line => legendCtx.measureText(line.trim()).width);
+    const maxTextWidth = Math.max(...textWidths);
+
+    // Calculate box dimensions
+    const boxWidth = maxTextWidth + (padding * 2);
+    const boxHeight = ((legendContent.length - 0.5) * lineSpacing) + (padding * 2);
+
+    // Draw background
+    legendCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    legendCtx.roundRect(padding, padding, boxWidth, boxHeight, padding);
+    legendCtx.fill();
+
+    // Draw text
+    legendCtx.fillStyle = 'black';
+    legendContent.forEach((line, index) => {
+        const x = padding * 2;
+        // initial half line pad
+        const y = (padding * 2) + ((index + 0.5) * lineSpacing);
+        legendCtx.fillText(line.trim(), x, y);
+    });
+
+    // Combine the legend with the scene
+    ctx.drawImage(legendCanvas, 0, 0);
+
+    // Export
+    const dataURL = finalCanvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = `tomography_${sceneParms.viewType}view_${targetWidth}x${targetHeight}.png`;
+    link.click();
+
+    // Restore settings
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
+    renderer.setSize(originalWidth, originalHeight, false);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    renderer.render(scene, camera);
+    */
+}
+
+
+
+
