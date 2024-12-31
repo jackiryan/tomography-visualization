@@ -125,6 +125,9 @@ function computePhi(theta, N, R, h) {
     const numerator = R * sinThetaSquared + cosTheta * sqrtTerm;
     const denominator = R + h;
 
+    // Since theta is really theta_max, the most extreme
+    // observation angle, the corresponding phi is the spacing
+    // across all satellites in one "wing" of the constellation
     const phiAll = Math.acos(numerator / denominator);
 
     let phi = phiAll;
