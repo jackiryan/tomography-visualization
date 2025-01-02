@@ -133,10 +133,31 @@ Try different values of $h$ using the slider to understand the relationship betw
 Now that we have a formula for $\phi$, we can compute the distance between the satellites using the formula for a chord:
 
 $$
-L =d_s = 2(R+h)\sin(\phi/2)
+L = d_s = 2(R+h)\sin(\phi/2)
 $$
 
 This is the same value that is used for $d_s$ in the legend of the JavaScript visualization. 
+
+## Extension: Time Distance Between Observations
+
+Using the assumption from the beginning that the satellites are in a Keplerian orbit, we can use the following form of Kepler's Third Law:
+
+$$
+\begin{flalign*}
+T &= 2\pi\sqrt{\frac{(R+h)^3}{GM}}, \\
+R &= 6.371 \times 10^6 \text{ m}, \\
+G &= 6.674 \times 10^{-11} \text{ m}^3 \text{ kg}^{-1} \text{ s}^{-2}, \\
+M &= 5.972 \times 10^{24} \text{ kg}
+\end{flalign*}
+$$
+
+Since $\phi$ represents a $\frac{\phi}{2\pi}$ fraction of the overall period of the shared orbit, the time $t_s$ between one satellite's nadir-pointed observation and the next satellite is given by:
+
+ $$
+ t_s = \phi\sqrt{\frac{(R+h)^3}{GM}}
+ $$
+
+Remember units when computing values from this equation, the constants above use meters and seconds. This equation gives a "ballpark" of how far apart time steps will be in the constellation for a given altitude and max theta. Plugging in the values for a 400 km orbit with 70 degree max theta gives a time separation of about 120 seconds or 2 minutes between observations.
 
 ## JavaScript Implementation
 In the code, the calculation of $\phi$ is implemented like so:
