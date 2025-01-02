@@ -114,7 +114,7 @@ $$
 
 where the terms $A$, $B$, and $C$ are now expressions in terms of $R$, $h$, and $\theta$.
 
-2. Using the quadratic formula, we can now solve the problem in terms of $\cos\phi$. Putting this into Wolfram Alpha, we get a very complex set of equations, a positive and negative solution, that is not written down here, but you can input the equation from the previous section and ask it to solve for $x$ to see for yourself. First, we can discard the negative solution as it is not physically relevant in the context of this problem. When doing the algebra, there is a convenient $(R+h)$ term that can be canceled from the numerator and denominator. We need to use the identities $\sin^2\theta+\cos^2\theta=1$ and $1-\cos^2\theta=\sin^2\theta$ to simplify the terms inside the square root. Ultimately, there will a $\cos\theta$ term that can be pulled out of the square root (in addition to an $(R+h)$ term. It should technically be $\lvert \cos\theta \rvert$ when it is pulled out, but since we constrain $0 \leq \theta \leq \pi/2$ we can simply write it as $\cos\theta$:
+2. Using the quadratic formula, we can now solve the problem in terms of $\cos\phi$. Putting this into Wolfram Alpha, we get a very complex set of equations, a positive and negative solution, that is not written down here, but you can input the equation from the previous section and ask it to solve for $x$ to see for yourself. First, we can discard the negative solution as it is not physically relevant in the context of this problem. When doing the algebra, there is a convenient $(R+h)$ term that can be canceled from the numerator and denominator. We need to use the identities $\sin^2\theta+\cos^2\theta=1$ and $1-\cos^2\theta=\sin^2\theta$ to simplify the terms inside the square root. Ultimately, there will a $\cos\theta$ term that can be pulled out of the square root (in addition to the $(R+h)$ term). It should technically be $\lvert \cos\theta \rvert$ when it is pulled out, but since we constrain $0 \leq \theta \leq \pi/2$ we can simply write it as $\cos\theta$:
 
 $$
 \cos\phi = \frac{R \sin^2\theta + \cos\theta \sqrt{R^2 \cos^2\theta + 2Rh + h^2}}{R + h}.
@@ -142,23 +142,23 @@ This is the same value that is used for $d_s$ in the legend of the JavaScript vi
 In the code, the calculation of $\phi$ is implemented like so:
 ```javascript
 function computePhi(theta, N, R, h) {
-	const sinThetaSquared = Math.sin(theta)**2;
-	const cosTheta = Math.cos(theta);
-	const sqrtTerm = Math.sqrt(R**2 * cosTheta**2 + h * (2 * R + h));
-	const numerator = R * sinThetaSquared + cosTheta *  sqrtTerm;
-	const denominator = R + h;
+    const sinThetaSquared = Math.sin(theta)**2;
+    const cosTheta = Math.cos(theta);
+    const sqrtTerm = Math.sqrt(R**2 * cosTheta**2 + h * (2 * R + h));
+    const numerator = R * sinThetaSquared + cosTheta *  sqrtTerm;
+    const denominator = R + h;
 
-	// Since theta is really theta_max, the most extreme
-	// observation angle, the corresponding phi is the spacing
-	// across all satellites in one "wing" of the constellation
-	const  phiAll = Math.acos(numerator / denominator);
+    // Since theta is really theta_max, the most extreme
+    // observation angle, the corresponding phi is the spacing
+    // across all satellites in one "wing" of the constellation
+    const  phiAll = Math.acos(numerator / denominator);
 
-	let  phi = phiAll;
-	if (N  >  1) {
-		phi = 2 * phiAll / (N - 1);
-	}
+    let phi = phiAll;
+    if (N > 1) {
+        phi = 2 * phiAll / (N - 1);
+    }
 
-	return  phi;
+    return  phi;
 }
 ```
 In the GUI of the application, $\theta$ is adjustable within a range from 15 to 75 degrees and the number of satellites is adjustable for odd numbers from 1 to 11. To visualize the satellites, R and h are set to arbitrary values (100 and 0.4) that help frame the objects in the scene. To obtain the value of $d_s$ displayed in the legend, the "physically correct" values of `R = 6371` and `h = 400` are used.
@@ -166,9 +166,9 @@ In the GUI of the application, $\theta$ is adjustable within a range from 15 to 
 Likewise, $d_s$ is computed using this function:
 ```javascript
 function  computeDs(phi) {
-	const R_E = 6371;
-	const R = R_E + satParms.realH;
-	const L = 2 * R * Math.sin(phi / 2);
-	return L;
+    const R_E = 6371;
+    const R = R_E + satParms.realH;
+    const L = 2 * R * Math.sin(phi / 2);
+    return L;
 }
 ```
