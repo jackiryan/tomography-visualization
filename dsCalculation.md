@@ -17,18 +17,25 @@ The problem has now been defined in a way that allows us to work entirely in 2-D
 2.  $P_0$ lies on the $+x$-axis at $(R_E + h, 0)$.
 3. The angle $\phi = \angle P_0 C P_1$ is then the angle by which we rotate $P_0$ about the origin to land on $P_1$.
 Thus:
+
 $$
 P_1 = \bigl((R_E+h)\cos\phi, (R_E+h)\sin\phi\bigr).
 $$
+
 4. Since $Q$ is on the line $C P_0$ and $CQ = R_E$, $QP_0 = h$, the coordinates of $Q$ are:
+
 $$
-Q = (R_E, 0) \quad \text{(because \(CQ = R_E\) along the \(+x\)-axis)}.
+Q = (R_E, 0) \quad \text{(because $CQ = R_E$ along the $+x$-axis)}.
 $$
+
 So we have:
+
 $$
-P_0 = \bigl(R_E + h, 0\bigr), \quad \\
-P_1 = \bigl((R_E + h)\cos\phi, (R_E + h)\sin\phi\bigr), \quad \\
-Q = (R_E, 0).
+\begin{flalign*}
+P_0 &= \bigl(R_E + h, 0\bigr), \quad \\
+P_1 &= \bigl((R_E + h)\cos\phi, (R_E + h)\sin\phi\bigr), \quad \\
+Q &= (R_E, 0).
+\end{flalign*}
 $$
 
 ## Derivation of $\phi(\theta)$
@@ -38,42 +45,49 @@ $$
 ### Express $\theta = \angle P_0 Q P_1$ via dot products
 
 The angle $\theta$ at $Q$ is formed by the vectors:
+
 $$
-\overrightarrow{QP_0} = P_0 - Q = \bigl((R+h) - R, 0\bigr) = (h, 0), \\
-\overrightarrow{QP_1} = P_1 - Q = \bigl((R+h)\cos\phi - R, (R+h)\sin\phi\bigr).
+\begin{flalign*}
+\overrightarrow{QP_0} = P_0 - Q &= \bigl((R+h) - R, 0\bigr) = (h, 0), \\
+\overrightarrow{QP_1} = P_1 - Q &= \bigl((R+h)\cos\phi - R, (R+h)\sin\phi\bigr).
+\end{flalign*}
 $$
+
 To compute $\cos(\theta)$, we use the formula for the cosine of the angle between two vectors:
+
 $$
 \cos(\theta) = \frac{\overrightarrow{QP_0} \cdot \overrightarrow{QP_1}}{\lvert \overrightarrow{QP_0} \rvert \lvert \overrightarrow{QP_1} \rvert}.
 $$
 
-1. **Dot Product**:
+1. **Dot Product (Numerator)**:
+
 $$
 \overrightarrow{QP_0} \cdot \overrightarrow{QP_1} = (h, 0) \cdot \bigl((R+h)\cos\phi - R, (R+h)\sin\phi\bigr) = h \bigl((R+h)\cos\phi - R\bigr).
 $$
 
-2. **Magnitudes**:
+2. **Magnitudes (Denominator)**:
+
 $$
-\lvert \overrightarrow{QP_0} \rvert = h, \\
-\lvert \overrightarrow{QP_1} \rvert = \sqrt{\bigl((R+h)\cos\phi - R\bigr)^2 + \bigl((R+h)\sin\phi\bigr)^2}.
+\begin{flalign*}
+\lvert \overrightarrow{QP_0} \rvert &= h, \\
+\lvert \overrightarrow{QP_1} \rvert &= \sqrt{\bigl((R+h)\cos\phi - R\bigr)^2 + \bigl((R+h)\sin\phi\bigr)^2}.
+\end{flalign*}
 $$
 
 Expanding the square root:
+
 $$
 \bigl((R+h)\cos\phi - R\bigr)^2 + \bigl((R+h)\sin\phi\bigr)^2 = (R+h)^2 + R^2 - 2R(R+h)\cos\phi.
 $$
 
 Thus:
+
 $$
 \lvert \overrightarrow{QP_1} \rvert = \sqrt{R^2 + (R+h)^2 - 2R(R+h)\cos\phi}.
 $$
 
-3. **Final Expression for $\cos(\theta)$**:
-$$
-\cos(\theta) = \frac{h \bigl((R+h)\cos\phi - R\bigr)}{h \sqrt{R^2 + (R+h)^2 - 2R(R+h)\cos\phi}}.
-$$
+3. **Final Expression for $\cos(\theta)$, $h$ from the dot product term in the numerator and $\lvert \overrightarrow{QP_0} \rvert = h$ in the denominator cancel**:
 
-Simplifying:
 $$
 \cos(\theta) = \frac{(R+h)\cos\phi - R}{\sqrt{R^2 + (R+h)^2 - 2R(R+h)\cos\phi}}.
 $$
@@ -81,35 +95,47 @@ $$
 ### Solving for $\phi$ in terms of $\theta$
 
 From the previous section, the relationship between $\cos(\theta)$ and $\phi$ is:
+
 $$
 \cos(\theta) = \frac{(R+h)\cos\phi - R}{\sqrt{R^2 + (R+h)^2 - 2R(R+h)\cos\phi}}.
 $$
 
-Rewriting this to solve for $\phi$:
+This equation is actually quite difficult to solve due to the presence of $\cos\phi$ and $\cos^2\phi$ terms when attempting to isolate phi. We can use an "isolate-square-substitute" method to solve. That is, we isolate the square root term, square both sides, and substitute $x = \cos\phi$ to solve using the quadratic formula:
 
-1. Define the following variables to get a closed-form solution using the "isolate-square-solve" method:
+1. The full algebraic work is not shown in detail in this document, but suffice it to say that we multiply both sides by the denominator, square both sides to remove the square root, expand terms, and combine to get all terms on one side of the equation. We can then define the problem in the following manner:
+
 $$
-x = \cos\phi, \quad c = \cos\theta, \quad s = \sin\theta.
+\begin{flalign*}
+&x = \cos\phi, \\
+&Ax^2 + Bx + C = 0, \\
+&-(R+h)^{2}x^{2} + 2R(R+h)\sin^{2}(\theta)x + \left[(R+h)^{2}\cos^{2}(\theta) - R^{2}\sin^{2}(\theta)\right] = 0.
+\end{flalign*}
 $$
 
-2. Substitute into the equation and isolate $x$. After some algebra, the solution is:
+where the terms $A$, $B$, and $C$ are now expressions in terms of $R$, $h$, and $\theta$.
+
+2. Using the quadratic formula, we can now solve the problem in terms of $\cos\phi$. Putting this into Wolfram Alpha, we get a very complex set of equations, a positive and negative solution, that is not written down here, but you can input the equation from the previous section and ask it to solve for $x$ to see for yourself. First, we can discard the negative solution as it is not physically relevant in the context of this problem. When doing the algebra, there is a convenient $(R+h)$ term that can be canceled from the numerator and denominator. We need to use the identities $\sin^2\theta+\cos^2\theta=1$ and $1-\cos^2\theta=\sin^2\theta$ to simplify the terms inside the square root. Ultimately, there will a $\cos\theta$ term that can be pulled out of the square root (in addition to an $(R+h)$ term. It should technically be $\lvert \cos\theta \rvert$ when it is pulled out, but since we constrain $0 \leq \theta \leq \pi/2$ we can simply write it as $\cos\theta$:
+
 $$
-\cos\phi = \frac{R \sin^2\theta + \cos\theta \sqrt{R^2 \cos^2\theta + h (2R + h)}}{R + h}.
+\cos\phi = \frac{R \sin^2\theta + \cos\theta \sqrt{R^2 \cos^2\theta + 2Rh + h^2}}{R + h}.
 $$
 
-3. Final expression for $\phi$:
+3. Final expression for $\phi$ in terms of $\theta$:
+
 $$
-\phi(\theta) = \arccos\!\left(\frac{R \sin^2\theta + \cos\theta \sqrt{R^2 \cos^2\theta + h (2R + h)}}{R + h}\right).
+\phi(\theta) = \arccos\left(\frac{R \sin^2\theta + \cos\theta \sqrt{R^2 \cos^2\theta + h (2R + h)}}{R + h}\right).
 $$
 
 This relationship can be viewed on Desmos using the following link: https://www.desmos.com/calculator/u9d6uulogx
-Try different values of $h$ using the slider to understand the relationship between satellite spacing as altitude increases! For small $\phi$ and $\theta$ (up to around $\pi/4$), the relationship between $h$ and $\phi$ is approximately linear. I've set the domain to $0 \leq \theta \leq \pi/2$ to keep the values for phi physically meaningful. In the visualization, the max value of $\theta$ is further limited to $75^\circ$.
+Try different values of $h$ using the slider to understand the relationship between satellite spacing as altitude increases! For small $\phi$ and $\theta$ (up to around $\pi/4$), the relationship between $h$ and $\phi$ is approximately linear. Recall that the domain is $0 \leq \theta \leq \pi/2$ to keep the values for phi physically meaningful. In the visualization, the max value of $\theta$ is further limited to $75^\circ$.
 
 ## Computing $d_s$ from $\phi$
 Now that we have a formula for $\phi$, we can compute the distance between the satellites using the formula for a chord:
+
 $$
 L =d_s = 2(R+h)\sin(\phi/2)
 $$
+
 This is the same value that is used for $d_s$ in the legend of the JavaScript visualization. 
 
 ## JavaScript Implementation
