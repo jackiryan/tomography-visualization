@@ -1,26 +1,28 @@
-// main.js
 import * as THREE from 'three';
-import gsap from 'gsap';
 
-import Stats from 'three/addons/libs/stats.module.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { NRRDLoader } from 'three/examples/jsm/loaders/NRRDLoader.js';
-import cloudVertexShader from './shaders/clouds/cloudVertex.glsl';
-import cloudFragmentShader from './shaders/clouds/cloudFragment.glsl';
-import atmVertexShader from './shaders/atm/atmVertex.glsl';
-import atmFragmentShader from './shaders/atm/atmFragment.glsl';
+// import atmVertexShader from './shaders/atm/atmVertex.glsl';
+// import atmFragmentShader from './shaders/atm/atmFragment.glsl';
 import oceanVertexShader from './shaders/ocean/oceanVertex.glsl';
 import oceanFragmentShader from './shaders/ocean/oceanFragment.glsl';
 
-let container, stats;
-let camera, controls, scene, renderer;
-let cloudModel, satModel, imagePlane, clipPlane, ground, atm, frustum;
-let sky, dirLight, orbitTrack;
+
+function degToRad(deg) {
+    return deg * Math.PI / 180.0;
+}
+
+let container, camera, controls, scene, renderer;
+let cloudGroup, imagePlane, ground, satelliteGroup, satModel; //, atm;
+let clipPlane, clipPlaneAxis;
+let sky, keyLight, fillLight, orbitTrack;
 
 const useGltf = true;
 const useBigModel = true;
+const useNormalHelper = false;
+const useMultiFrusta = false;
+const useSimple = true;
 
 let modelDim = 400;
 if (useBigModel) {
@@ -38,33 +40,169 @@ if (useGltf) {
 }
 
 const satelliteFile = './CloudSat.glb';
-const starTexture = './starmap_2020_4k.avif';
+const starTexture = './starmap_2020_8k.avif';
 const planeTexture = './MISR_40m_radiance_nadir_2048x2048.png';
 
 console.log(`loading model: ${modelFile}`);
 console.log(`model dimension: ${modelDim}`);
 
-const defaultPointSize = 2.0;
-const initOffset = 3.5;
-const initSatScale = 0.04;
+const initClipDir = new THREE.Vector3(-1, 0, 0);
 const groundSize = 100; // for spherical ground
 const groundPosition = new THREE.Vector3(0, -100, 0);
 
+const sceneParms = {
+    offset: 1.25,
+    isoX: -34,
+    isoY: -70,
+    isoLat: 81,
+    isoLon: -120,
+    isoRot: 0,
+    isoClipPos: 0,
+    sideX: -14,
+    sideY: -6,
+    sideLat: 81,
+    sideLon: -90,
+    sideRot: 0,
+    sideClipPos: 0.5,
+    initSats: 3,
+    viewType: 'iso'
+};
+
+const renderParms = {
+    fps: 30,
+    interval: 1000 / 30,
+    lastTime: 0
+};
+
+const satParms = {
+    scale: 0.02,
+    height: 0.4,
+    spacing: 0.003906643756115759,
+    //spacing: 0.010786503244046407,
+    colT0: 0x00ff00,
+    colTm1: 0x0000ff,
+    colTp1: 0x0000ff,
+    //colT0: 0xf0e442,
+    //colTm1: 0x56b4e9,
+    //colTp1: 0xcc79a7,
+    colDft: 0x00ff00,
+    numSatellites: sceneParms.initSats,
+    minSatellites: 1,
+    maxSatellites: 11,
+    pos: 0,
+    maxTheta: 45,
+    //maxTheta: 70,
+    // a normal altitude for a cubesat deployed from ISS
+    realH: 400
+};
+
+const cloudParms = {
+    pointSize: 0.1,
+    yOffset: 0.0,
+    color: new THREE.Color(0xffffff),
+    opacity: 1.0
+};
+
+
+// Create the legend container
+const legendContainer = document.createElement('div');
+legendContainer.style.position = 'absolute';
+legendContainer.style.top = '20px';
+legendContainer.style.left = '20px';
+legendContainer.style.padding = '15px';
+legendContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.7)';
+legendContainer.style.color = 'black';
+legendContainer.style.fontFamily = 'CMU Serif, Times New Roman, serif';
+legendContainer.style.fontSize = '24px';
+legendContainer.style.borderRadius = '8px';
+legendContainer.style.zIndex = '1000';
+legendContainer.style.pointerEvents = 'none';
+
+function computePhi(theta, N, R, h) {
+    const sinThetaSquared = Math.sin(theta) ** 2;
+    const cosTheta = Math.cos(theta);
+    const sqrtTerm = Math.sqrt(R ** 2 * cosTheta ** 2 + h * (2 * R + h));
+    const numerator = R * sinThetaSquared + cosTheta * sqrtTerm;
+    const denominator = R + h;
+
+    // Since theta is really theta_max, the most extreme
+    // observation angle, the corresponding phi is the spacing
+    // across all satellites in one "wing" of the constellation
+    const phiAll = Math.acos(numerator / denominator);
+
+    let phi = phiAll;
+    if (N > 1) {
+        phi = 2 * phiAll / (N - 1);
+    }
+
+    return phi;
+}
+
+console.log(`phi = ${computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, groundSize, satParms.height)}`);
+
+function computeDs(phi) {
+    const R_E = 6371;
+    const R = R_E + satParms.realH;
+    const L = 2 * R * Math.sin(phi / 2);
+    return L;
+}
+
+function updateLegend(n, theta, ds) {
+    legendContainer.innerHTML = `
+N = ${n}<br>
+\\(\\theta = ${theta}°\\)<br>
+\\(d_s = ${ds.toFixed(1)}\\) km<br>
+\\(h = ${satParms.realH}\\) km
+    `.trim();
+
+    // Retypeset the math
+    if (window.MathJax) {
+        MathJax.typesetPromise([legendContainer]);
+    }
+}
+
+/*
+function updateLegend(n, theta, ds) {
+    legendContainer.innerHTML = `
+N = ${n}
+θ = ${theta}°
+d<sub>s</sub> = ${ds.toFixed(1)} km
+h = ${satParms.realH} km
+    `.trim().split('\n').join('<br>');
+}
+*/
+
 await init().then(() => {
-    renderer.setAnimationLoop(animate);
-    initGUI();
+    for (const child of scene.children) {
+        console.log(child);
+        if (child.name === 'radiance') {
+            child.renderOrder = -1;
+        } else if (child.name === 'satellites') {
+            setSatelliteRenderOrder(satParms.numSatellites);
+        }
+        console.log(`Render order: ${child.renderOrder}`);
+    }
+    if (useSimple) {
+        initGUISimple();
+    } else {
+        initGUI();
+    }
+
+    requestAnimationFrame(animate);
+    document.body.appendChild(legendContainer);
+    updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
 });
 
-
 async function init() {
-
     container = document.createElement('div');
     document.body.appendChild(container);
 
     const aspect = window.innerWidth / window.innerHeight;
-    camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 5000);
-    camera.position.set(0, 2, 0);
-    //camera.rotation.set(-Math.PI / 2.0, 0, 0);
+    if (useMultiFrusta) {
+        camera = new THREE.PerspectiveCamera(30, aspect, 0.1, 1000);
+    } else {
+        camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+    }
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000011);
@@ -83,48 +221,61 @@ async function init() {
     scene.add(ambientLight);
     const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x083471, 2);
     scene.add(hemisphereLight);
-    dirLight = new THREE.DirectionalLight(0xffffff, 10);
-    dirLight.position.set(0, 1.5, 0);
-    scene.add(dirLight);
-
-    //stats = new Stats();
-    //container.appendChild(stats.dom);
+    keyLight = new THREE.DirectionalLight(0xffffff, 10);
+    scene.add(keyLight);
+    fillLight = new THREE.DirectionalLight(0xffffff, 10);
+    scene.add(fillLight);
 
     controls = new OrbitControls(camera, renderer.domElement);
 
-
     if (useGltf) {
-        await loadGLTF(modelFile).then(() => {
-            fitCameraToObject(camera, cloudModel, initOffset);
-            camera.lookAt(cloudModel);
-        });
-    } else {
-        await loadNRRD(modelFile).then(() => {
-            fitCameraToObject(camera, cloudModel, initOffset);
-            camera.lookAt(cloudModel);
-        });
+        await loadGLTF(modelFile);
     }
 
-    await loadSatellite(satelliteFile);
-    await loadStars(starTexture);
     await loadPlane(planeTexture).then(() => {
         const numCopies = 2;
-        const imagePlaneClone = imagePlane.clone(true);
+        const planeGroup = new THREE.Group(); // Create a group to hold the clones
+
+        if (useNormalHelper) {
+            addNormalArrow(imagePlane);
+        }
+
+        const originalPlane = imagePlane.clone();
+        originalPlane.children = [];
+
         for (let x = -numCopies; x <= numCopies; x++) {
             if (x === 0) continue; // Skip the original plane position
 
-            const imPlaneClone = imagePlaneClone.clone(true);
-            imPlaneClone.position.x += x;
+            const imPlaneClone = originalPlane.clone();
+            imPlaneClone.material = imPlaneClone.material.clone();
+            imPlaneClone.material.uniforms = THREE.UniformsUtils.clone(imPlaneClone.material.uniforms);
+
+            // These values will highly depend on camera angle. These work well for the
+            // default camera angle.
+            if (x > 1) {
+                imPlaneClone.material.uniforms.uThreshold.value = 0.3;
+            } else if (x > 0) {
+                imPlaneClone.material.uniforms.uThreshold.value = 0.2;
+            } else {
+                imPlaneClone.material.uniforms.uThreshold.value = 0.1;
+            }
+
+            console.log(`Radiance image at x = ${x}, threshold = ${imPlaneClone.material.uniforms.uThreshold.value}`);
+
+            imPlaneClone.position.x = x;
             imPlaneClone.rotation.x = Math.PI;
-            imagePlane.add(imPlaneClone);
+
+            planeGroup.add(imPlaneClone);
         }
+
+        imagePlane.add(planeGroup);
+        clipPlaneAxis = new THREE.Vector3().copy(initClipDir);
+        console.log(clipPlaneAxis);
     });
+    await loadSatellite(satelliteFile);
+    await loadStars(starTexture);
 
     const groundGeo = new THREE.SphereGeometry(groundSize, 128, 128);
-    //const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
-    //const groundMat = new THREE.MeshPhongMaterial({
-    //    color: 0x083471
-    //});
     const sunDir = new THREE.Vector3(1, 1, 0).normalize();
     const groundMat = new THREE.ShaderMaterial({
         vertexShader: oceanVertexShader,
@@ -137,7 +288,12 @@ async function init() {
             uShininess: new THREE.Uniform(30.0)
         }
     });
+    ground = new THREE.Mesh(groundGeo, groundMat);
+    scene.add(ground);
+    ground.position.copy(groundPosition);
+
     /*
+    const atmGeo = new THREE.SphereGeometry(groundSize * 1.001, 128, 128);
     const atmMat = new THREE.ShaderMaterial({
         vertexShader: atmVertexShader,
         fragmentShader: atmFragmentShader,
@@ -148,88 +304,96 @@ async function init() {
         side: THREE.BackSide,
         transparent: true
     });
+    atm = new THREE.Mesh(atmGeo, atmMat);
+    scene.add(atm);
+    atm.position.copy(groundPosition);
     */
-    ground = new THREE.Mesh(groundGeo, groundMat);
-    //atm = new THREE.Mesh(atmGeo, atmMat);
-    scene.add(ground);
-    //scene.add(atm);
-    ground.position.copy(groundPosition);
-    //atm.position.copy(groundPosition);
-
-    orbitTrack = createCircle(groundSize + satModel.position.length(), 1024, 0xffffff);
-    scene.add(orbitTrack);
-    orbitTrack.position.copy(groundPosition);
 
     window.addEventListener('resize', onWindowResize, false);
 }
 
 async function loadGLTF(modelName) {
     return new Promise((resolve, reject) => {
-        new GLTFLoader().load(modelName, function (gltf) {
-            clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0.07);
-            cloudModel = gltf.scene;
-            cloudModel.traverse((node) => {
-                if (node instanceof THREE.Points) {
-                    node.material = createPointCloudMaterial();
+        new GLTFLoader().load(
+            modelName,
+            function (gltf) {
+                cloudGroup = new THREE.Group();
+                // use side view default for multi frusta scene, otherwise use 0
+                clipPlane = new THREE.Plane(initClipDir, sceneParms.isoClipPos);
+                if (useMultiFrusta) {
+                    clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+                } else {
+                    clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
                 }
-            });
-            cloudModel.scale.set(1 / modelDim, 1 / modelDim, 1 / modelDim);
-            cloudModel.position.x -= 0.5;
-            cloudModel.position.z -= 0.5;
-            cloudModel.scale.z *= -1.0;
-            scene.add(cloudModel);
-            resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load point cloud model: ${error}`);
-            reject(error);
-        });
+                const cloudModel = gltf.scene;
+
+                // First traversal to replace materials for Points nodes
+                cloudModel.traverse((node) => {
+                    if (node instanceof THREE.Points) {
+                        node.material = createPointCloudMaterial();
+                    }
+                });
+
+                // Offset vector to shift the origin by -0.5 in X and Z axes
+                const offset = new THREE.Vector3(-0.5 * modelDim, 0, 0.5 * modelDim);
+
+                // Traverse the model and adjust geometries
+                cloudModel.traverse((node) => {
+                    if (node instanceof THREE.Mesh || node instanceof THREE.Points) {
+                        // Translate the geometry to shift the origin
+                        node.geometry.translate(offset.x, offset.y, offset.z);
+                    }
+                });
+
+                // Apply scaling to the model
+                cloudModel.scale.set(1 / modelDim, 1 / modelDim, 1 / modelDim);
+
+                // Add the original model to the scene
+                cloudGroup.add(cloudModel);
+
+                // Create the clones and share geometries and materials
+                for (let offset = -2; offset < 3; offset++) {
+                    if (offset == 0) {
+                        continue;
+                    }
+                    const cloudModelClone = cloneModelSharingGeometryAndMaterials(cloudModel);
+                    cloudModelClone.position.x = offset;
+
+                    cloudGroup.add(cloudModelClone);
+                }
+                scene.add(cloudGroup);
+
+                resolve();
+            },
+            undefined,
+            function (error) {
+                console.error(`Failed to load point cloud model: ${error}`);
+                reject(error);
+            }
+        );
     });
 }
 
-async function loadNRRD(modelName) {
-    return new Promise((resolve, reject) => {
-        new NRRDLoader().load(modelName, async function (volume) {
-            clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.4);
+// Helper function to clone the model and share geometries and materials
+function cloneModelSharingGeometryAndMaterials(original) {
+    const clone = original.clone();
 
-            const texture = new THREE.Data3DTexture(volume.data, volume.xLength, volume.yLength, volume.zLength);
-            texture.format = THREE.RedFormat;
-            texture.minFilter = THREE.LinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-            texture.needsUpdate = true;
+    function traverseAndShare(originalNode, clonedNode) {
+        if (originalNode.isMesh || originalNode.isPoints) {
+            clonedNode.geometry = originalNode.geometry; // Share geometry
+            clonedNode.material = createPointCloudMaterial(); // Don't share material
+            clonedNode.material.uniforms['uCloudColor'] = new THREE.Color(0xffffff);
+        }
 
-            const geometry = new THREE.BoxGeometry(1, 1, 1);
-            const material = new THREE.RawShaderMaterial({
-                glslVersion: THREE.GLSL3,
-                uniforms: {
-                    uBase: { value: new THREE.Color(0x798aa0) },
-                    uMap: { value: texture },
-                    uCameraPos: { value: new THREE.Vector3() },
-                    uThreshold: { value: 0.01 },
-                    uOpacity: { value: 1.0 },
-                    uRange: { value: 0.0 },
-                    uSteps: { value: 200 },
-                    uFrame: { value: 0 }
-                },
-                vertexShader: cloudVertexShader,
-                fragmentShader: cloudFragmentShader,
-                side: THREE.BackSide,
-                transparent: true,
-                clipping: true,
-                clippingPlanes: [clipPlane]
-            });
+        // Recursively traverse children
+        for (let i = 0; i < originalNode.children.length; i++) {
+            traverseAndShare(originalNode.children[i], clonedNode.children[i]);
+        }
+    }
 
-            cloudModel = new THREE.Mesh(geometry, material);
-            cloudModel.position.set(0, 0.6, 0);
-            //cloudModel.position.set(0.375, 0.13, 0.375);
-            //cloudModel.rotation.set(-Math.PI / 2.0, 0, 0);
-            //cloudModel.scale.set(0.25, 0.25, 0.25);
-            scene.add(cloudModel);
-            resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load point cloud data: ${error}`);
-            reject(error);
-        });
-    });
+    traverseAndShare(original, clone);
+
+    return clone;
 }
 
 function createPointCloudMaterial() {
@@ -240,11 +404,15 @@ function createPointCloudMaterial() {
 
         uniform float uScale;
         
+        out vec3 vPosition;
+
         void main() {
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             // increasing the numerator increases the size of the points
             gl_PointSize = uScale / -mvPosition.z;
             gl_Position = projectionMatrix * mvPosition;
+
+            vPosition = position;
             #if NUM_CLIPPING_PLANES > 0 && ! defined(PHYSICAL) && ! defined(PHONG)
                 vViewPosition = -mvPosition.xyz;
             #endif
@@ -262,7 +430,29 @@ function createPointCloudMaterial() {
 
         #endif
 
+
+        uniform vec3 uCloudColor;
+        uniform float uCloudOpacity;
+
+        in vec3 vPosition;
+
         out vec4 color;
+
+        vec3 ACESFilmToneMapping(vec3 color) {
+            const float a = 2.51;
+            const float b = 0.03;
+            const float c = 2.43;
+            const float d = 0.59;
+            const float e = 0.14;
+            return clamp((color * (a * color + b)) / (color * (c * color + d) + e), 0.0, 1.0);
+        }
+
+        vec3 LinearToSRGB(vec3 color) {
+            vec3 cutoff = step(vec3(0.0031308), color);
+            vec3 lower = color * 12.92;
+            vec3 higher = (pow(clamp(color, 0.0031308, 1.0), vec3(1.0 / 2.4)) * 1.055) - 0.055;
+            return mix(lower, higher, cutoff);
+        }
 
         void main() {
             #if NUM_CLIPPING_PLANES > 0
@@ -290,15 +480,36 @@ function createPointCloudMaterial() {
                 #endif
             #endif
 
-            vec4 diffuseColor = vec4(1.0, 1.0, 1.0, 1.0);
-            color = diffuseColor;
+            /*
+            float t = (vPosition.x + 1024.0) / 2048.0;
+            t = clamp(t, 0.0, 1.0);
+            vec3 gradientColor;
+            vec3 uColortm1 = vec3(1.0);
+            vec3 uColort0 = vec3(0.0, 1.0, 1.0);
+            if (t <= 0.5) {
+                float t1 = smoothstep(0.0, 0.05, t / 0.5);
+                gradientColor = mix(uColortm1, uColort0, t1);
+            } else {
+                float t3 = smoothstep(0.0, 0.05, (t - 0.5) / 0.5);
+                gradientColor = mix(uColort0, uCloudColor, t3);
+            }
+            */
+            vec3 gradientColor = uCloudColor;
+            gradientColor = ACESFilmToneMapping(gradientColor);
+            gradientColor = LinearToSRGB(gradientColor);
+
+            color = vec4(gradientColor, uCloudOpacity);
         }
     `;
 
+    // Even though opacity is adjustable, I am not setting transparency to true
+    // until we know that adjusting opacity is a desirable effect for communicating the message
     const material = new THREE.ShaderMaterial({
         glslVersion: THREE.GLSL3,
         uniforms: {
-            'uScale': { value: defaultPointSize }
+            'uScale': { value: cloudParms.pointSize },
+            'uCloudColor': { value: cloudParms.color },
+            'uCloudOpacity': { value: cloudParms.opacity }
         },
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
@@ -307,87 +518,6 @@ function createPointCloudMaterial() {
     });
 
     return material;
-}
-
-async function loadSatellite(modelName) {
-    return new Promise((resolve, reject) => {
-        new GLTFLoader().load(modelName, function (glb) {
-            satModel = glb.scene;
-            // works out to 18.75 when accounting for initSatScale
-            satModel.position.y = 0.75;
-            satModel.rotation.y = 0.15 * Math.PI;
-
-            const frustumHeight = satModel.position.y / initSatScale;
-            const frustumRadius = 1.0 / initSatScale;
-            const frustumGeo = new THREE.BufferGeometry();
-            // not sure why everything is off by 1 unit
-            const vertices = new Float32Array([
-                0, -1, 0,
-                -frustumRadius / 2 + 1, -frustumHeight, 0,
-                frustumRadius / 2 + 1, -frustumHeight, 0
-            ]);
-            frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-            frustumGeo.setIndex([0, 1, 2]);
-            frustumGeo.computeVertexNormals();
-            const frustumMaterial = new THREE.MeshBasicMaterial({
-                color: 0x00ff00,
-                transparent: true,
-                opacity: 0.25,
-                side: THREE.DoubleSide
-            });
-            frustum = new THREE.Mesh(frustumGeo, frustumMaterial);
-            //frustum.position.set(0, -1, 0);
-            frustum.rotation.set(0, Math.PI / 2, 0);
-            satModel.add(frustum);
-
-            const satModelClone1 = satModel.clone(true);
-            const satModelClone2 = satModel.clone(true);
-
-            // Set the positions of the clones relative to the original model
-            // 1.45 is probably not exact but I can't do math
-            satModelClone1.children[1].scale.set(1.45, 2, 1);
-            satModelClone1.children[1].rotation.set(Math.PI / 2, 0, Math.PI / 2);
-            satModelClone1.position.set(18.75, 0, 0); // Position clone 1, use 18.75 * tan(z_rot) using z rotation below
-            satModelClone1.rotation.set(0, Math.PI - 0.0025, -Math.PI / 4);
-            satModelClone2.children[1].scale.set(1.45, 2, 1);
-            satModelClone2.position.set(-18.75, 0, 0); // Position clone 2
-            satModelClone2.rotation.set(0, 0.0025, Math.PI / 4);
-
-            // Add the clones as children of the original satellite model
-            satModel.add(satModelClone1);
-            satModel.add(satModelClone2);
-
-            // Add the original satellite model (with its clones) to the scene
-            satModel.scale.set(initSatScale, initSatScale, initSatScale);
-            scene.add(satModel);
-            resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load satellite model: ${error}`);
-            reject(error);
-        });
-    });
-}
-
-async function loadStars(starTex) {
-    return new Promise((resolve, reject) => {
-        new THREE.TextureLoader().load(starTex, function (texture) {
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-            const skyGeo = new THREE.SphereGeometry(1, 32, 32);
-            const skyMat = new THREE.MeshBasicMaterial({
-                map: texture,
-                side: THREE.BackSide,
-                depthWrite: false
-            });
-            sky = new THREE.Mesh(skyGeo, skyMat);
-            sky.scale.setScalar(10);
-            scene.add(sky);
-            resolve();
-        }, undefined, function (error) {
-            console.error(`Failed to load sky texture: ${error}`);
-            reject(error);
-        });
-    });
 }
 
 async function loadPlane(planeTex) {
@@ -441,7 +571,9 @@ async function loadPlane(planeTex) {
                 side: THREE.DoubleSide
             });
             imagePlane = new THREE.Mesh(planeGeo, planeMat);
-            imagePlane.rotation.set(-Math.PI / 2.0, 0.0, 0.0);
+            // Mirror flip the image to match the orientation of the point cloud
+            imagePlane.scale.y *= -1;
+            imagePlane.name = 'radiance';
             scene.add(imagePlane);
             resolve();
         }, undefined, function (error) {
@@ -451,68 +583,596 @@ async function loadPlane(planeTex) {
     });
 }
 
+function addNormalArrow(imagePlane) {
+    // Define the arrow properties
+    const arrowLength = 0.5; // Adjust length as needed
+    const arrowColor = 0xff0000; // Red color for visibility
+
+    // Calculate the normal direction of imagePlane
+    const normalDirection = new THREE.Vector3(0, 0, 1).applyQuaternion(imagePlane.quaternion).normalize();
+
+    // Create the ArrowHelper
+    const arrowHelper = new THREE.ArrowHelper(normalDirection, imagePlane.position, arrowLength, arrowColor);
+
+    // Add the ArrowHelper to the scene
+    imagePlane.add(arrowHelper);
+
+    return arrowHelper;
+}
+
+async function loadSatellite(modelName) {
+    return new Promise((resolve, reject) => {
+        new GLTFLoader().load(
+            modelName,
+            function (glb) {
+                if (!satelliteGroup) {
+                    satelliteGroup = new THREE.Group();
+                    satelliteGroup.name = 'satellites';
+                    scene.add(satelliteGroup);
+                }
+
+                satModel = glb.scene;
+                satModel.scale.set(satParms.scale, satParms.scale, satParms.scale);
+
+                // create the clones of the original glb
+                createSatellites(satParms.numSatellites);
+
+                resolve();
+            },
+            undefined,
+            function (error) {
+                console.error(`Failed to load satellite model: ${error}`);
+                reject(error);
+            }
+        );
+    });
+}
+
+function createSatellites(numSatellites) {
+    const orbitRadius = groundSize + satParms.height;
+
+    const modelUp = new THREE.Vector3(0, 1, 0);
+    const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, modelUp);
+    //const satSpacing = Math.max(satParms.spacing - 0.0005 * Math.max(numSatellites - 5, 0), 0.0025);
+    const satSpacing = satParms.spacing;
+
+    if (!orbitTrack) {
+        orbitTrack = createCircle(orbitRadius, 1024, 0xffffff);
+        scene.add(orbitTrack);
+        orbitTrack.position.copy(groundPosition);
+        orbitTrack.quaternion.copy(modelQuat);
+    }
+
+    const frustumHeight = satParms.height / satParms.scale;
+    const frustumRadius = 1.0 / satParms.scale;
+
+    // Loop to create satellites along the orbitTrack
+    for (let i = 0; i < numSatellites; i++) {
+        let satellite, frustum;
+        const phi = (i - (numSatellites - 1) / 2) * satSpacing;
+
+        const createFrustum = (frustumRadius, frustumHeight, frustumLength, col, id) => {
+            const frustumGeo = new THREE.BufferGeometry();
+            // Experimentally derived way to slightly adjust the frustum component down for satellites
+            // that are further out. This makes the line where the frusta meet line up visually. 
+            const frustumAdjustment = -0.2 * (Math.abs(frustumLength) - 25) / 25;
+            //const frustumAdjustment = 0;
+            const vertices = new Float32Array([
+                0, -1, 0,
+                -frustumRadius / 2, -frustumHeight + frustumAdjustment, -frustumLength,
+                frustumRadius / 2, -frustumHeight + frustumAdjustment, -frustumLength,
+            ]);
+            frustumGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            frustumGeo.setIndex([0, 1, 2]);
+            frustumGeo.computeVertexNormals();
+
+            const frustumMaterial = new THREE.MeshBasicMaterial({
+                color: col,
+                transparent: true,
+                opacity: 0.25,
+                side: THREE.DoubleSide,
+            });
+
+            const frustumMesh = new THREE.Mesh(frustumGeo, frustumMaterial);
+            frustumMesh.rotation.set(0, Math.PI / 2, 0);
+            frustumMesh.name = `frustum${id}`; // Assign a name for easy identification
+            return frustumMesh;
+        };
+
+        if (phi === 0) {
+            satellite = satModel.clone();
+            satellite.remove(satellite.getObjectByName('frustumC'));
+            if (useMultiFrusta) {
+                frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colT0, 'C');
+                const frustumOff = groundSize * Math.tan(satSpacing) / satParms.scale;
+                const frustumL = createFrustum(frustumRadius, frustumHeight, -frustumOff, satParms.colTp1, 'L');
+                const frustumR = createFrustum(frustumRadius, frustumHeight, frustumOff, satParms.colTm1, 'R');
+                satellite.add(frustum);
+                satellite.add(frustumL);
+                satellite.add(frustumR);
+            } else {
+                frustum = createFrustum(frustumRadius, frustumHeight, 0, satParms.colDft, 'C');
+                satellite.add(frustum);
+            }
+        } else {
+            satellite = satModel.clone();
+            satellite.remove(satellite.getObjectByName('frustumC'));
+
+            const x = orbitRadius * Math.sin(phi);
+            const y = orbitRadius * Math.cos(phi);
+            const position = new THREE.Vector3(x, y, 0);
+
+            position.applyQuaternion(modelQuat);
+            position.add(groundPosition);
+            position.y -= satParms.height;
+
+            satellite.position.copy(position);
+
+            // Calculate the vector from the ground position to the satellite
+            const direction = new THREE.Vector3()
+                .subVectors(position, groundPosition)
+                .normalize();
+
+            // Set the satellite's quaternion to face away from the ground position
+            const up = new THREE.Vector3(0, 1, 0);
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+            satellite.quaternion.copy(quaternion);
+
+            const frustumLength = groundSize * Math.tan(phi) / satParms.scale;
+            frustum = createFrustum(frustumRadius, frustumHeight, frustumLength, satParms.colT0, 'S');
+            satellite.add(frustum);
+
+            if (useMultiFrusta) {
+                satellite.remove(satellite.getObjectByName('frustumL'));
+                satellite.remove(satellite.getObjectByName('frustumR'));
+                let col = satParms.colTp1;
+                if (phi < 0) {
+                    col = satParms.colTm1;
+                }
+                const frustumC = createFrustum(frustumRadius, frustumHeight, 0, col, 'C');
+                satellite.add(frustumC);
+            }
+        }
+
+        satelliteGroup.add(satellite);
+    }
+    setSatelliteRenderOrder(numSatellites);
+}
+
+function updateSatellites() {
+    // Remove existing satellites from the group
+    while (satelliteGroup.children.length > 0) {
+        const satellite = satelliteGroup.children[0];
+        satelliteGroup.remove(satellite);
+
+        // Dispose of geometries and materials to free memory
+        satellite.traverse((node) => {
+            if (node.isMesh || node.isPoints) {
+                if (node.geometry) node.geometry.dispose();
+                if (node.material) node.material.dispose();
+            }
+        });
+    }
+
+    createSatellites(satParms.numSatellites);
+}
+
+function setSatelliteRenderOrder(numSatellites) {
+    if (sceneParms.viewType == 'side') {
+        const nadirIndex = Math.ceil(numSatellites / 2);
+        for (let i = 1; i <= numSatellites; i++) {
+            let renderOrder;
+            if (i < nadirIndex) {
+                renderOrder = i;
+            } else if (i === nadirIndex) {
+                renderOrder = numSatellites;
+            } else {
+                renderOrder = numSatellites - (i - nadirIndex);
+            }
+            satelliteGroup.children[i - 1].renderOrder = renderOrder;
+        }
+    } else {
+        let renderOrder = numSatellites + 1;
+        for (const sat of satelliteGroup.children) {
+            sat.renderOrder = renderOrder;
+            renderOrder -= 1;
+        }
+    }
+}
+
+async function loadStars(starTex) {
+    return new Promise((resolve, reject) => {
+        new THREE.TextureLoader().load(starTex, function (texture) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+            const skyGeo = new THREE.SphereGeometry(1, 32, 32);
+            const skyMat = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.BackSide,
+                depthWrite: false
+            });
+            sky = new THREE.Mesh(skyGeo, skyMat);
+            sky.scale.setScalar(20);
+            // arbitrary rotations to put a well-populated part of the sky in the background
+            sky.rotation.y = 3 * Math.PI / 4;
+            sky.rotation.z = - Math.PI / 4;
+            scene.add(sky);
+            resolve();
+        }, undefined, function (error) {
+            console.error(`Failed to load sky texture: ${error}`);
+            reject(error);
+        });
+    });
+}
+
 function createCircle(radius, segments, color) {
-    // Create an array to hold the circle's vertices
     const positions = [];
 
-    // Generate the circle's points
     for (let i = 0; i <= segments; i++) {
-        const theta = (i / segments) * Math.PI * 2;
-        const x = radius * Math.cos(theta);
-        const y = radius * Math.sin(theta);
+        const phi = (i / segments) * Math.PI * 2;
+        const x = radius * Math.cos(phi);
+        const y = radius * Math.sin(phi);
         const z = 0; // Circle lies in the XY plane
         positions.push(x, y, z);
     }
 
-    // Create a BufferGeometry and set its position attribute
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
-    // Create a material for the line
     const material = new THREE.LineBasicMaterial({ color });
 
-    // Create the LineLoop (connects the points in a loop)
+    // LineLoop connects the points in positions in a loop
     const circle = new THREE.LineLoop(geometry, material);
-
-    // Rotate the circle to wrap around the sphere appropriately
-    circle.rotation.x = Math.PI / 2; // Adjust as needed
 
     return circle;
 }
 
-function positionPlane(phi, theta) {
+function getPosition(lat, lon) {
+    const latRad = THREE.MathUtils.degToRad(lat);
+    const lonRad = THREE.MathUtils.degToRad(lon);
     const planePosition = new THREE.Vector3(
-        Math.sin(phi) * Math.cos(theta),
-        Math.cos(phi),
-        Math.sin(phi) * Math.sin(theta)).multiplyScalar(groundSize);
+        groundPosition.x + groundSize * Math.cos(latRad) * Math.cos(lonRad),
+        groundPosition.y + groundSize * Math.sin(latRad),
+        groundPosition.z + groundSize * Math.cos(latRad) * Math.sin(lonRad));
 
-    // This accounts for the -pi / 2 rotation on the x axis that the plane requires. Otherwise it will appear
-    // perpendicular
-    const up = new THREE.Vector3(0, 0, 1);
-    const normal = new THREE.Vector3(planePosition.x, planePosition.y, planePosition.z).normalize();
-
-    imagePlane.position.copy(planePosition.add(groundPosition));
-    imagePlane.quaternion.setFromUnitVectors(up, normal);
-    cloudModel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
-    satModel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
-    satModel.position.copy(imagePlane.position);
-    satModel.position.y += 0.75;
-    imagePlane.rotation.z = cloudModel.rotation.y;
-    cloudModel.position.copy(planePosition.add(new THREE.Vector3(-0.5, 0, -0.5)));
-    sky.position.copy(planePosition);
-    clipPlane.constant = imagePlane.position.x + 0.07;
-    dirLight.position.set(satModel.position.x - 0.5, satModel.position.y + 0.5, satModel.position.z - 0.5);
-    dirLight.target = satModel;
-
-    // Rotate the orbit track to align with the plane passing through satModel
-    const quat = new THREE.Quaternion();
-    quat.set(-0.0294, 0.001, -0.02, 1);
-    orbitTrack.quaternion.copy(quat);
-
+    return {
+        position: planePosition,
+        normal: new THREE.Vector3()
+            .subVectors(planePosition, groundPosition)
+            .normalize()
+    }
 }
+
+function positionScene(lat, lon, satHeight, rotAngle) {
+    // Determine the position and normal on the sphere for the given latitude and longitude
+    const { position, normal } = getPosition(lat, lon);
+    const planePosition = position;
+
+    // This accounts for the -pi / 2 rotation on the x axis that the plane requires, 
+    // otherwise the radiance image plane will appear perpendicular to ground/ocean
+    const modelUp = new THREE.Vector3(0, 1, 0);
+    const modelQuat = new THREE.Quaternion().setFromUnitVectors(modelUp, normal);
+    const rotationQuaternion = new THREE.Quaternion().setFromAxisAngle(normal, THREE.MathUtils.degToRad(rotAngle));
+    modelQuat.multiply(rotationQuaternion);
+
+    imagePlane.position.copy(planePosition);
+    imagePlane.quaternion.setFromUnitVectors(modelUp, normal);
+    imagePlane.rotateOnAxis(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+
+    const cloudDisp = normal.clone().multiplyScalar(cloudParms.yOffset);
+    cloudGroup.position.copy(planePosition).add(cloudDisp);
+    cloudGroup.quaternion.copy(modelQuat);
+
+    const clipNormal = new THREE.Vector3(-1, 0, 0).applyQuaternion(cloudGroup.quaternion).normalize();
+    clipPlane.normal.copy(clipNormal);
+    const satDisp = normal.clone().multiplyScalar(satHeight);
+    satelliteGroup.position.copy(planePosition).add(satDisp);
+    satelliteGroup.quaternion.copy(modelQuat);
+
+    if (imagePlane.arrowHelper) {
+        // Update arrow's position and direction
+        imagePlane.arrowHelper.position.copy(imagePlane.position);
+        imagePlane.arrowHelper.setDirection(normal.clone().applyQuaternion(rotationQuaternion));
+    }
+
+    sky.position.copy(planePosition);
+
+    orbitTrack.quaternion.copy(modelQuat);
+
+    setControlTarget();
+}
+
+function getDefaultCameraRot() {
+    // default camera rotation and offset depend on number of satellites,
+    // this function computes those values
+    const cameraRot = {
+        camDist: 0,
+        camX: 0,
+        camY: 0
+    }
+    const satelliteArg = Math.max((satParms.numSatellites - sceneParms.initSats), 0);
+
+
+    if (sceneParms.viewType === 'iso') {
+        cameraRot.camDist = Math.min(sceneParms.offset + (satelliteArg * 0.325), 2.0);
+        cameraRot.camX = Math.min(sceneParms.isoX + (satelliteArg * 5), -8);
+        cameraRot.camY = sceneParms.isoY;
+        //cameraRot.camY = Math.min(sceneParms.isoY + (satelliteArg * 2.5), -65);
+    } else {
+        cameraRot.camDist = Math.min(sceneParms.offset + (satelliteArg * 0.125), 1.8);
+        cameraRot.camX = sceneParms.sideX;
+        cameraRot.camY = sceneParms.sideY;
+        setControlTarget();
+    }
+    return cameraRot;
+}
+
+function setControlTarget() {
+    const targetPos = new THREE.Vector3().copy(imagePlane.position);
+    if (sceneParms.viewType === 'side') {
+        targetPos.y += satParms.height / 2;
+    }
+    controls.target.copy(targetPos);
+    controls.update();
+}
+
+function initGUISimple() {
+    const gui = new GUI();
+
+    // Initial GUI properties set to the iso view
+    const propsScene = {
+        cameraDist: sceneParms.offset,
+        cameraRotX: sceneParms.isoX,
+        cameraRotY: sceneParms.isoY,
+        modelLat: sceneParms.isoLat,
+        modelLon: sceneParms.isoLon,
+        modelRot: sceneParms.isoRot,
+        satHeight: satParms.height
+    };
+    function getCameraRotation() {
+        const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
+        const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
+        return new THREE.Euler(crX, crY, 0, 'XYZ');
+    }
+    const propsLight = {
+        posX: 200.0,
+        posY: 200.0,
+        posZ: -130.0,
+        fillX: -30.0,
+        fillY: 0.0,
+        fillZ: -35.0
+    };
+    function moveLight(posX, posY, posZ) {
+        keyLight.position.set(
+            satelliteGroup.position.x + posX,
+            satelliteGroup.position.y + posY,
+            satelliteGroup.position.z + posZ);
+        keyLight.target = satelliteGroup;
+        fillLight.position.set(
+            satelliteGroup.position.x + propsLight.fillX,
+            satelliteGroup.position.y + propsLight.fillY,
+            satelliteGroup.position.z + propsLight.fillZ);
+        fillLight.target = satelliteGroup;
+    }
+
+    const controllers = {};
+
+    if (useGltf) {
+        function cloudsChanged() {
+            let primary = true;
+            for (let model of cloudGroup.children) {
+                model.traverse((node) => {
+                    if (node instanceof THREE.Points) {
+                        const uniforms = node.material.uniforms;
+                        uniforms['uScale'].value = cloudParms.pointSize;
+                        if (primary) {
+                            uniforms['uCloudColor'].value = cloudParms.color;
+                            primary = false;
+                        } else {
+                            uniforms['uCloudColor'].value = new THREE.Color(0xffffff);
+                        }
+                        uniforms['uCloudOpacity'].value = cloudParms.opacity;
+                    }
+                });
+            }
+            const { position, normal } = getPosition(propsScene.modelLat, propsScene.modelLon);
+            const cloudDisp = normal.clone().multiplyScalar(cloudParms.yOffset);
+            cloudGroup.position.copy(position).add(cloudDisp);
+        }
+        cloudsChanged();
+    }
+
+
+    /* Scene Positioning */
+    const folderScene = gui.addFolder('Camera Angle');
+
+    const satelliteFolder = gui.addFolder('Satellites');
+    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
+        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
+        if (satParms.numSatellites % 2 === 0) {
+            satParms.numSatellites -= 1;
+        }
+        satParms.spacing = computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, groundSize, satParms.height);
+        updateSatellites();
+
+        const cameraRot = getDefaultCameraRot()
+        propsScene.cameraDist = cameraRot.camDist;
+        propsScene.cameraRotX = cameraRot.camX;
+        propsScene.cameraRotY = cameraRot.camY;
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+
+        updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
+    });
+
+    const updateSatPositions = (position) => {
+        const scaledPos = -position / 500;
+        const angle = (scaledPos + 0.25) * Math.PI * 2;
+
+        const orbitRadius = groundSize + satParms.height;
+        const x = orbitRadius * Math.cos(angle);
+        const y = orbitRadius * Math.sin(angle);
+        const z = 0;
+
+        const pos = new THREE.Vector3(x, y, z);
+        pos.applyEuler(orbitTrack.rotation);
+        pos.add(orbitTrack.position);
+
+        satelliteGroup.position.copy(pos);
+
+        const center = orbitTrack.position.clone();
+        const direction = center.sub(pos).normalize();
+
+        const quaternion = new THREE.Quaternion();
+        const initialDir = new THREE.Vector3(0, -1, 0);
+        quaternion.setFromUnitVectors(initialDir, direction);
+
+        satelliteGroup.setRotationFromQuaternion(quaternion);
+
+        clipPlane.constant = cloudGroup.position.x - (Math.sin(angle - Math.PI / 2) * 100);
+    };
+
+    controllers.satPos = satelliteFolder.add(satParms, 'pos', -2, 2, 0.1).onChange(updateSatPositions).name('Time Step');
+    satelliteFolder.add(satParms, 'maxTheta', 15, 75).onChange(() => {
+        satParms.spacing = computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, groundSize, satParms.height);
+        updateSatellites();
+
+        updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
+    })
+
+    // Define action functions for the profiles
+    const actions = {
+        viewIsoProfile: function () {
+            // Set propsScene values to iso profile values
+            sceneParms.viewType = 'iso';
+            const cameraRot = getDefaultCameraRot();
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.isoLat;
+            propsScene.modelLon = sceneParms.isoLon;
+            propsScene.modelRot = sceneParms.isoRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
+
+            if (!useMultiFrusta) {
+                clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+            }
+            satParms.pos = 0;
+            controllers.satPos.updateDisplay();
+        },
+        viewSideProfile: function () {
+            // Set propsScene values to side profile values
+            sceneParms.viewType = 'side';
+            const cameraRot = getDefaultCameraRot();
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.sideLat;
+            propsScene.modelLon = sceneParms.sideLon;
+            propsScene.modelRot = sceneParms.sideRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
+
+            if (!useMultiFrusta) {
+                clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+            }
+            satParms.pos = 0;
+            controllers.satPos.updateDisplay();
+        }
+    };
+    // Add buttons to the GUI
+    folderScene.add(actions, 'viewIsoProfile').name('View Angled Profile');
+    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
+
+    gui.add({ viewMulti: openMultiAnglePage }, 'viewMulti').name('View Multi-Angle Mode');
+    gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Widescreen Image');
+    gui.add({ captureSquare: captureSquareImage }, 'captureSquare').name('Capture Square Image');
+
+    if (useMultiFrusta) {
+        propsScene.cameraDist = 13.5;
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+        actions.viewSideProfile();
+    }
+    positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+    moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
+    clipPlane.normal.copy(normalDir);
+    if (useMultiFrusta) {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+    } else {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+    }
+    fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+    controls.update();
+
+    updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
+}
+
 
 function initGUI() {
     const gui = new GUI();
+
+    /* Scene Positioning */
+    const folderScene = gui.addFolder('Scene Positioning');
+
+    // Initial GUI properties set to the iso view
+    const propsScene = {
+        cameraDist: sceneParms.offset,
+        cameraRotX: sceneParms.isoX,
+        cameraRotY: sceneParms.isoY,
+        modelLat: sceneParms.isoLat,
+        modelLon: sceneParms.isoLon,
+        modelRot: sceneParms.isoRot,
+        satHeight: satParms.height
+    };
+
+    const controllers = {}; // Object to store GUI controllers
+
+    function getCameraRotation() {
+        const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
+        const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
+        return new THREE.Euler(crX, crY, 0, 'XYZ');
+    }
+
+    // Store each controller reference
+    controllers.cameraDist = folderScene.add(propsScene, 'cameraDist', 0.1, 30, 0.05).onChange(() => {
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+    controllers.cameraRotX = folderScene.add(propsScene, 'cameraRotX', -180, 180, 1).onChange(() => {
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+    controllers.cameraRotY = folderScene.add(propsScene, 'cameraRotY', -180, 180, 1).onChange(() => {
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+    controllers.modelLat = folderScene.add(propsScene, 'modelLat', -90, 90, 1).onChange(() => {
+        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+    controllers.modelLon = folderScene.add(propsScene, 'modelLon', -180, 180, 1).onChange(() => {
+        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+    controllers.modelRot = folderScene.add(propsScene, 'modelRot', -45, 45, 0.1).onChange(() => {
+        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+        controls.update();
+    });
+    controllers.satHeight = folderScene.add(propsScene, 'satHeight', 0, 1, 0.01).onChange(() => {
+        positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight);
+        controls.update();
+    });
+
     const folderClip = gui.addFolder('Clip Plane');
     const propsClip = {
         get 'enabled'() {
@@ -522,40 +1182,42 @@ function initGUI() {
             renderer.localClippingEnabled = v;
         },
         get 'axis'() {
-            if (clipPlane.normal.x === -1) {
+            if (clipPlaneAxis.x === -1) {
                 return 'X';
             }
-            else if (clipPlane.normal.y === -1) {
+            else if (clipPlaneAxis.y === -1) {
                 return 'Y';
             }
-            else if (clipPlane.normal.z === -1) {
+            else if (clipPlaneAxis.z === -1) {
                 return 'Z';
             }
         },
         set 'axis'(v) {
             switch (v) {
                 case 'X':
-                    clipPlane.normal.set(-1, 0, 0);
+                    clipPlaneAxis.set(-1, 0, 0);
                     break;
                 case 'Y':
-                    clipPlane.normal.set(0, -1, 0);
+                    clipPlaneAxis.set(0, -1, 0);
                     break;
                 case 'Z':
-                    clipPlane.normal.set(0, 0, -1);
+                    clipPlaneAxis.set(0, 0, -1);
                     break;
             }
+            const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
+            clipPlane.normal.copy(normalDir);
         },
         get 'planePosition'() {
             let imagePos;
             switch (propsClip.axis) {
                 case 'X':
-                    imagePos = imagePlane.position.x;
+                    imagePos = cloudGroup.position.x;
                     break;
                 case 'Y':
-                    imagePos = imagePlane.position.y;
+                    imagePos = cloudGroup.position.y;
                     break;
                 case 'Z':
-                    imagePos = imagePlane.position.z;
+                    imagePos = cloudGroup.position.z;
                     break;
             }
             return clipPlane.constant - imagePos;
@@ -564,13 +1226,13 @@ function initGUI() {
             let imagePos;
             switch (propsClip.axis) {
                 case 'X':
-                    imagePos = imagePlane.position.x;
+                    imagePos = cloudGroup.position.x;
                     break;
                 case 'Y':
-                    imagePos = imagePlane.position.y;
+                    imagePos = cloudGroup.position.y;
                     break;
                 case 'Z':
-                    imagePos = imagePlane.position.z;
+                    imagePos = cloudGroup.position.z;
                     break;
             }
             clipPlane.constant = imagePos + v;
@@ -578,186 +1240,204 @@ function initGUI() {
     };
     folderClip.add(propsClip, 'enabled');
     folderClip.add(propsClip, 'axis', ['X', 'Y', 'Z']);
-    folderClip.add(propsClip, 'planePosition', -1.0, 1.0, 0.01);
+    controllers.planePosition = folderClip.add(propsClip, 'planePosition', -10.0, 10.0, 0.01);
 
+    // Define action functions for the profiles
+    const actions = {
+        viewIsoProfile: function () {
+            // Set propsScene values to iso profile values
+            sceneParms.viewType = 'iso';
+            const cameraRot = getDefaultCameraRot()
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.isoLat;
+            propsScene.modelLon = sceneParms.isoLon;
+            propsScene.modelRot = sceneParms.isoRot;
 
-    /*
-    const folderSky = gui.addFolder('Sky Parameters');
-    const propsSky = {
-        turbidity: 0,
-        rayleigh: 0.2,
-        mieCoefficient: 0.005,
-        mieDirectionalG: 0.066,
-        elevation: 33,
-        azimuth: 180,
-        exposure: renderer.toneMappingExposure,
-        atmStart: -0.2,
-        atmStop: 1
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
+
+            // Update the GUI controllers to reflect the new values
+            controllers.cameraRotX.updateDisplay();
+            controllers.cameraRotY.updateDisplay();
+            controllers.modelLat.updateDisplay();
+            controllers.modelLon.updateDisplay();
+            controllers.modelRot.updateDisplay();
+            if (!useMultiFrusta) {
+                controllers.planePosition.setValue(sceneParms.isoClipPos);
+                controllers.planePosition.updateDisplay();
+            }
+        },
+        viewSideProfile: function () {
+            // Set propsScene values to side profile values
+            sceneParms.viewType = 'side';
+            const cameraRot = getDefaultCameraRot()
+            propsScene.cameraRotX = cameraRot.camX;
+            propsScene.cameraRotY = cameraRot.camY;
+            propsScene.modelLat = sceneParms.sideLat;
+            propsScene.modelLon = sceneParms.sideLon;
+            propsScene.modelRot = sceneParms.sideRot;
+
+            // Update the scene
+            positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+            fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+            setControlTarget();
+            setSatelliteRenderOrder(satParms.numSatellites);
+
+            // Update the GUI controllers to reflect the new values
+            controllers.cameraRotX.updateDisplay();
+            controllers.cameraRotY.updateDisplay();
+            controllers.modelLat.updateDisplay();
+            controllers.modelLon.updateDisplay();
+            controllers.modelRot.updateDisplay();
+            if (!useMultiFrusta) {
+                controllers.planePosition.setValue(sceneParms.isoClipPos);
+                controllers.planePosition.updateDisplay();
+            }
+        }
     };
-
-    function skyChanged() {
-        const uniforms = sky.material.uniforms;
-        uniforms['turbidity'].value = propsSky.turbidity;
-        uniforms['rayleigh'].value = propsSky.rayleigh;
-        uniforms['mieCoefficient'].value = propsSky.mieCoefficient;
-        uniforms['mieDirectionalG'].value = propsSky.mieDirectionalG;
-        uniforms['uAtmStart'].value = propsSky.atmStart;
-        uniforms['uAtmStop'].value = propsSky.atmStop;
-
-        const phi = THREE.MathUtils.degToRad(90 - propsSky.elevation);
-        const theta = THREE.MathUtils.degToRad(propsSky.azimuth);
-
-        sun.setFromSphericalCoords(1, phi, theta);
-
-        uniforms['sunPosition'].value.copy(sun);
-
-        renderer.toneMappingExposure = propsSky.exposure;
-        renderer.render(scene, camera);
+    if (useMultiFrusta) {
+        propsScene.cameraDist = 13.5;
+        controllers.cameraDist.updateDisplay();
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+        actions.viewSideProfile();
     }
-
-    folderSky.add(propsSky, 'turbidity', 0.0, 20.0, 0.1).onChange(skyChanged);
-    folderSky.add(propsSky, 'rayleigh', 0.0, 4, 0.001).onChange(skyChanged);
-    folderSky.add(propsSky, 'mieCoefficient', 0.0, 0.1, 0.001).onChange(skyChanged);
-    folderSky.add(propsSky, 'mieDirectionalG', 0.0, 1, 0.001).onChange(skyChanged);
-    folderSky.add(propsSky, 'elevation', -10, 90, 0.1).onChange(skyChanged);
-    folderSky.add(propsSky, 'azimuth', - 180, 180, 0.1).onChange(skyChanged);
-    folderSky.add(propsSky, 'exposure', 0, 1, 0.0001).onChange(skyChanged);
-    folderSky.add(propsSky, 'atmStart', -1, 1, 0.01).onChange(skyChanged);
-    folderSky.add(propsSky, 'atmStop', -1, 1, 0.01).onChange(skyChanged);
-
-    skyChanged();
-    */
+    // Add buttons to the GUI
+    folderScene.add(actions, 'viewIsoProfile').name('View Iso Profile');
+    folderScene.add(actions, 'viewSideProfile').name('View Side Profile');
 
     const folderCloud = gui.addFolder('Cloud Parameters');
     if (useGltf) {
-        const propsCloud = {
-            scale: defaultPointSize,
-            posY: -0.07,
-            rotY: 0.0
-        };
-
         function cloudsChanged() {
-            cloudModel.traverse((node) => {
-                if (node instanceof THREE.Points) {
-                    const uniforms = node.material.uniforms;
-                    uniforms['uScale'].value = propsCloud.scale;
-                    cloudModel.position.y = imagePlane.position.y + propsCloud.posY;
-                }
-            });
+            let primary = true;
+            for (let model of cloudGroup.children) {
+                model.traverse((node) => {
+                    if (node instanceof THREE.Points) {
+                        const uniforms = node.material.uniforms;
+                        uniforms['uScale'].value = cloudParms.pointSize;
+                        if (primary) {
+                            uniforms['uCloudColor'].value = cloudParms.color;
+                            primary = false;
+                        } else {
+                            uniforms['uCloudColor'].value = new THREE.Color(0xffffff);
+                        }
+                        uniforms['uCloudOpacity'].value = cloudParms.opacity;
+                    }
+                });
+            }
+            const { position, normal } = getPosition(propsScene.modelLat, propsScene.modelLon);
+            const cloudDisp = normal.clone().multiplyScalar(cloudParms.yOffset);
+            cloudGroup.position.copy(position).add(cloudDisp);
         }
-        folderCloud.add(propsCloud, 'scale', 0.1, 10, 0.1).onChange(cloudsChanged);
-        folderCloud.add(propsCloud, 'posY', -0.2, 0.2, 0.01).onChange(cloudsChanged);
-        folderCloud.add(propsCloud, 'rotY', 0, Math.PI, 0.01).onChange(() => {
-            imagePlane.rotation.z = -propsCloud.rotY;
-            cloudModel.rotation.y = propsCloud.rotY;
-        });
-    } else {
-        const propsCloud = {
-            qcThreshold: 1.0,
-            opacity: 100.0,
-            range: 0.0,
-            raymarchSteps: 200
-        };
-
-        function cloudsChanged() {
-            const uniforms = cloudModel.material.uniforms;
-            uniforms['uThreshold'].value = propsCloud.qcThreshold / 100.0;
-            uniforms['uOpacity'].value = propsCloud.opacity / 100.0;
-            uniforms['uRange'].value = propsCloud.range;
-            uniforms['uSteps'].value = propsCloud.raymarchSteps;
-        }
-
-        folderCloud.add(propsCloud, 'qcThreshold', 0, 100, 0.1).onChange(cloudsChanged);
-        folderCloud.add(propsCloud, 'opacity', 0, 100, 0.1).onChange(cloudsChanged);
-        folderCloud.add(propsCloud, 'range', 0, 1, 0.01).onChange(cloudsChanged);
-        folderCloud.add(propsCloud, 'raymarchSteps', 0, 500, 1).onChange(cloudsChanged);
+        folderCloud.add(cloudParms, 'pointSize', 0.1, 10, 0.1).onChange(cloudsChanged);
+        folderCloud.add(cloudParms, 'yOffset', -0.2, 0.2, 0.01).onChange(cloudsChanged);
+        folderCloud.addColor(cloudParms, 'color').onChange(cloudsChanged);
+        folderCloud.add(cloudParms, 'opacity', 0.0, 1.0, 0.01).onChange(cloudsChanged);
+        cloudsChanged();
     }
 
-    const folderMisc = gui.addFolder('Misc Parameters');
-    const propsMisc = {
-        modelOffset: initOffset,
-        modelPhi: -0.15,
-        modelTheta: 0.4,
-        satScale: initSatScale,
-        satRotY: 0.2 * Math.PI,
-        atmFalloff: 0.1,
-        atmColor: 0x00b5e2
-    }
-    folderMisc.add(propsMisc, 'modelOffset', 1, 20, 0.1).onChange(() => {
-        fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
-        controls.update();
-    });
-    folderMisc.add(propsMisc, 'modelPhi', -Math.PI / 8, Math.PI / 8, 0.001).onChange(() => {
-        positionPlane(propsMisc.modelPhi, propsMisc.modelTheta);
-        controls.target = imagePlane.position;
-        fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
-        controls.update();
-    });
-    folderMisc.add(propsMisc, 'modelTheta', -Math.PI / 4, Math.PI / 4, 0.01).onChange(() => {
-        positionPlane(propsMisc.modelPhi, propsMisc.modelTheta);
-        controls.target = imagePlane.position;
-        fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
-        controls.update();
-    });
-    folderMisc.add(propsMisc, 'satScale', 0, 0.2, 0.001).onChange(() => {
-        satModel.scale.set(propsMisc.satScale, propsMisc.satScale, propsMisc.satScale);
-    });
-    folderMisc.add(propsMisc, 'satRotY', -Math.PI, Math.PI, 0.01).onChange(() => {
-        satModel.rotation.y = propsMisc.satRotY;
-    });
-    /*
-    folderMisc.add(propsMisc, 'atmFalloff', 0.1, 5, 0.005).onChange(() => {
-        const uniforms = atm.material.uniforms;
-        uniforms['uAtmFalloff'].value = propsMisc.atmFalloff;
-    });
-    */
-    folderMisc.addColor(propsMisc, 'atmColor').onChange(() => {
-        atm.material.uniforms.uDayColor.value.set(propsMisc.atmColor);
-    });
-    const quaternionParams = {
-        x: orbitTrack.quaternion.x,
-        y: orbitTrack.quaternion.y,
-        z: orbitTrack.quaternion.z,
-        w: orbitTrack.quaternion.w,
+    const folderLight = gui.addFolder('Light Position');
+    const propsLight = {
+        posX: 200.0,
+        posY: 200.0,
+        posZ: -130.0,
+        fillX: -30.0,
+        fillY: 0.0,
+        fillZ: -35.0
     };
-
-    gui.add(quaternionParams, 'x', -1, 1).name('Quaternion X').onChange(updateQuaternion);
-    gui.add(quaternionParams, 'y', -1, 1).name('Quaternion Y').onChange(updateQuaternion);
-    gui.add(quaternionParams, 'z', -1, 1).name('Quaternion Z').onChange(updateQuaternion);
-    gui.add(quaternionParams, 'w', -1, 1).name('Quaternion W').onChange(updateQuaternion);
-
-    function updateQuaternion() {
-        // Normalize the quaternion components
-        const length = Math.sqrt(
-            quaternionParams.x ** 2 +
-            quaternionParams.y ** 2 +
-            quaternionParams.z ** 2 +
-            quaternionParams.w ** 2
-        );
-
-        orbitTrack.quaternion.set(
-            quaternionParams.x / length,
-            quaternionParams.y / length,
-            quaternionParams.z / length,
-            quaternionParams.w / length
-        );
+    function moveLight(posX, posY, posZ) {
+        keyLight.position.set(
+            satelliteGroup.position.x + posX,
+            satelliteGroup.position.y + posY,
+            satelliteGroup.position.z + posZ);
+        keyLight.target = satelliteGroup;
+        fillLight.position.set(
+            satelliteGroup.position.x + propsLight.fillX,
+            satelliteGroup.position.y + propsLight.fillY,
+            satelliteGroup.position.z + propsLight.fillZ);
+        fillLight.target = satelliteGroup;
     }
+    folderLight.add(propsLight, 'posX', 0, 200, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'posY', 200, 300, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'posZ', -300, 0, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'fillX', -200, 200, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'fillY', -10, 10, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
+    folderLight.add(propsLight, 'fillZ', -50, 50, 1).onChange(() => {
+        moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    });
 
-    positionPlane(propsMisc.modelPhi, propsMisc.modelTheta);
-    cloudModel.position.y = imagePlane.position.y - 0.07;
-    controls.target = imagePlane.position;
-    fitCameraToObject(camera, cloudModel, propsMisc.modelOffset);
+    const satelliteFolder = gui.addFolder('Satellites');
+    satelliteFolder.add(satParms, 'numSatellites', satParms.minSatellites, satParms.maxSatellites, 2).name('Number of Satellites').onChange(() => {
+        // lil-gui defaults to even numbers when using an increment of 2, but we want odd numbers
+        if (satParms.numSatellites % 2 === 0) {
+            satParms.numSatellites -= 1;
+        }
+        updateSatellites();
+
+        const cameraRot = getDefaultCameraRot()
+        propsScene.cameraDist = cameraRot.camDist;
+        propsScene.cameraRotX = cameraRot.camX;
+        propsScene.cameraRotY = cameraRot.camY;
+        controllers.cameraDist.updateDisplay();
+        controllers.cameraRotX.updateDisplay();
+        controllers.cameraRotY.updateDisplay();
+        fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
+        controls.update();
+    });
+
+    gui.add(renderParms, 'fps', 10, 60, 1).onChange(() => {
+        renderParms.interval = 1000 / renderParms.fps;
+    });
+    gui.add({ capture: captureCanvasImage }, 'capture').name('Capture Canvas');
+    gui.add({ captureSquare: captureSquareImage }, 'captureSquare').name('Capture Square Image');
+
+    positionScene(propsScene.modelLat, propsScene.modelLon, propsScene.satHeight, propsScene.modelRot);
+    moveLight(propsLight.posX, propsLight.posY, propsLight.posZ);
+    const normalDir = new THREE.Vector3().copy(clipPlaneAxis).applyQuaternion(cloudGroup.quaternion).normalize();
+    clipPlane.normal.copy(normalDir);
+    if (useMultiFrusta) {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.sideClipPos;
+    } else {
+        clipPlane.constant = cloudGroup.position.x + sceneParms.isoClipPos;
+    }
+    fitCameraToObject(camera, cloudGroup, propsScene.cameraDist, getCameraRotation());
     controls.update();
 }
 
-function fitCameraToObject(camera, object, offset) {
-
-    offset = offset || 1.25;
+function fitCameraToObject(camera, object, offset, rotation) {
+    offset = offset || propsScene.offset;
 
     const boundingBox = new THREE.Box3();
 
     // get bounding box of object - this will be used to setup controls and camera
-    boundingBox.setFromObject(object);
+    // the jank here is because using cloudGroup is kind of messed up for determining
+    // the camera position. If I add more clones, the camera positioning offset values
+    // are no longer accurate.
+    if (object.children && object.children.length >= 2) {
+        const box1 = new THREE.Box3().setFromObject(object.children[0]);
+        const box2 = new THREE.Box3();
+        for (const child of object.children) {
+            if (child.position.x === -1) {
+                box2.setFromObject(child);
+            }
+        }
+        boundingBox.union(box1).union(box2);
+    } else {
+        boundingBox.setFromObject(object);
+    }
 
     const dummy = new THREE.Vector3();
     const size = boundingBox.getSize(dummy);
@@ -767,15 +1447,18 @@ function fitCameraToObject(camera, object, offset) {
     let cameraZ = Math.abs(maxDim / 4 * Math.tan(camera.fov * 2));
     cameraZ *= offset;
 
+    const cameraOffset = new THREE.Vector3(0, 0, cameraZ);
+    const objectNormal = new THREE.Vector3()
+        .subVectors(object.position, groundPosition)
+        .normalize();
+    const modelQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), objectNormal);
+    cameraOffset.applyQuaternion(modelQuat);
+    cameraOffset.applyEuler(rotation);
+
     // zoom out a little so that objects don't fill the screen
-    camera.position.x = -cameraZ + object.position.x;
-    camera.position.y = 0.4 * cameraZ + object.position.y;
-    camera.position.z = cameraZ + object.position.z;
+    camera.position.copy(object.position).add(cameraOffset);
+    camera.lookAt(object.position);
 
-    // const minZ = boundingBox.min.z;
-    // const cameraToFarEdge = (minZ < 0) ? -minZ + cameraZ : cameraZ - minZ;
-
-    // camera.far = cameraToFarEdge * 1000;
     camera.updateProjectionMatrix();
 }
 
@@ -785,13 +1468,254 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-function animate() {
-    if (!useGltf) {
-        cloudModel.material.uniforms.uCameraPos.value.copy(camera.position);
-    }
+function animate(time) {
     controls.update();
 
-    //stats.begin();
-    renderer.render(scene, camera);
-    //stats.end();
+    const delta = time - renderParms.lastTime;
+
+    // Only render if enough time has passed
+    if (delta > renderParms.interval) {
+        renderParms.lastTime = time;
+        renderer.render(scene, camera); // Render the scene
+    }
+
+    requestAnimationFrame(animate);
 }
+
+function openMultiAnglePage() {
+    window.open('/multiangle.html', '_blank');
+}
+
+async function captureCanvasImage() {
+    // download a 4k render
+    await captureCanvas(3840, 2160);
+}
+
+async function captureSquareImage() {
+    // download a 2k square render
+    await captureCanvas(2000, 2000);
+}
+
+/*
+function captureCanvas(targetWidth, targetHeight) {
+    // Store the current renderer size and aspect ratio to go back to it after
+    // rendering at target res
+    const originalWidth = renderer.domElement.width;
+    const originalHeight = renderer.domElement.height;
+    const originalAspect = camera.aspect;
+
+    camera.aspect = targetWidth / targetHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(targetWidth, targetHeight, false);
+    renderer.setPixelRatio(1);
+
+    renderer.render(scene, camera);
+
+    const dataURL = renderer.domElement.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = `tomography_${sceneParms.viewType}view_${targetWidth}x${targetHeight}.png`;
+    link.click(); // Trigger download
+
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
+    renderer.setSize(originalWidth, originalHeight, false);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    renderer.render(scene, camera);
+}
+*/
+
+async function html2svg(element) {
+    // Clone the element and remove positioning
+    const clone = element.cloneNode(true);
+    clone.style.position = '';
+    clone.style.left = '';
+
+    const data = clone.outerHTML;
+    const styles = document.head.getElementsByTagName('style');
+    const mathJaxStyles = Array.from(styles)
+        .filter(style => style.id.includes('MJX-SVG-styles'))
+        .map(style => style.outerHTML)
+        .join('');
+
+    const svgContent = `
+        <svg xmlns="http://www.w3.org/2000/svg" 
+             xmlns:xhtml="http://www.w3.org/1999/xhtml"
+             width="${element.offsetWidth + 100}" 
+             height="${element.offsetHeight}">
+            <foreignObject width="100%" height="100%">
+                <xhtml:div xmlns="http://www.w3.org/1999/xhtml">
+                    ${mathJaxStyles}
+                    ${data}
+                </xhtml:div>
+            </foreignObject>
+        </svg>`;
+
+    //const link = document.createElement('a');
+    //link.href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgContent)}`;
+    //link.download = 'debug.svg';
+    //link.click();
+
+    return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgContent)))}`;
+}
+
+async function captureCanvas(targetWidth, targetHeight) {
+    const originalWidth = renderer.domElement.width;
+    const originalHeight = renderer.domElement.height;
+    const originalAspect = camera.aspect;
+
+    camera.aspect = targetWidth / targetHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(targetWidth, targetHeight, false);
+    renderer.setPixelRatio(1);
+
+    renderer.render(scene, camera);
+
+    // Create final canvas
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = targetWidth;
+    finalCanvas.height = targetHeight;
+    const ctx = finalCanvas.getContext('2d');
+
+    // Draw the WebGL canvas
+    ctx.drawImage(renderer.domElement, 0, 0);
+
+    // Create temporary div for MathJax
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.left = '-9999px';
+    document.body.appendChild(tempDiv);
+
+    // Calculate font size dynamically for the resolution
+    // Use 3% the window width and clamp to a max font size of 72
+    const baseFontSize = Math.min(targetWidth, targetHeight) * 0.03;
+    const fontSize = Math.max(14, Math.min(72, baseFontSize));
+
+    // Set content with MathJax formatting
+    const ds = computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH))
+    tempDiv.innerHTML = `
+        <div style="font-size: ${fontSize}px; color: black;">
+            <div>N = ${satParms.numSatellites}</div>
+            <div>\\(\\theta = ${satParms.maxTheta}°\\)</div>
+            <div>\\(d_s = ${ds.toFixed(1)}\\) km</div>
+            <div>\\(h = ${satParms.realH}\\) km</div>
+        </div>
+    `;
+
+    // Get rendered size
+    const padding = fontSize * 0.8;
+    const box = tempDiv.getBoundingClientRect();
+    const boxWidth = box.width + (padding * 2);
+    const boxHeight = box.height + (padding * 2);
+
+    // Draw background
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.roundRect(padding, padding, boxWidth, boxHeight, padding);
+    ctx.fill();
+
+    // Wait for MathJax to process
+    await MathJax.typesetPromise([tempDiv]);
+    const svgUrl = await html2svg(tempDiv);
+    //const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    //const svgUrl = URL.createObjectURL(svgBlob);
+
+    // Create and load image
+    const loadImage = () => {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => resolve(img);
+            img.onerror = (e) => {
+                console.error('Image load error:', e);
+                console.log('SVG content:', svg); // Add this to inspect the SVG
+                reject(e);
+            };
+            img.src = svgUrl;
+        });
+    };
+
+    const svgImage = await loadImage();
+    ctx.drawImage(svgImage, padding * 2, padding * 2);
+
+    // Export
+    const dataURL = finalCanvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = `tomography_${sceneParms.viewType}view_${targetWidth}x${targetHeight}.png`;
+    link.click();
+
+    // Clean up
+    URL.revokeObjectURL(svgUrl);
+    document.body.removeChild(tempDiv);
+
+    // Restore settings
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
+    renderer.setSize(originalWidth, originalHeight, false);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    renderer.render(scene, camera);
+
+    /*
+    // Legend canvas setup
+    const legendCanvas = document.createElement('canvas');
+    legendCanvas.width = targetWidth;
+    legendCanvas.height = targetHeight;
+    const legendCtx = legendCanvas.getContext('2d');
+
+    // Configure font size based on resolution
+    const baseFontSize = Math.min(targetWidth, targetHeight) * 0.03; // 3% of smallest dimension
+    const fontSize = Math.max(14, Math.min(72, baseFontSize)); // Clamp between 14 and 72
+    legendCtx.font = `${fontSize}px "CMU Serif"`;
+
+    // Calculate text dimensions
+    const padding = fontSize * 0.8;
+    const lineSpacing = fontSize * 1.4;
+    const legendContent = legendContainer.textContent.split('\n');
+
+    // Measure text width to determine box size
+    const textWidths = legendContent.map(line => legendCtx.measureText(line.trim()).width);
+    const maxTextWidth = Math.max(...textWidths);
+
+    // Calculate box dimensions
+    const boxWidth = maxTextWidth + (padding * 2);
+    const boxHeight = ((legendContent.length - 0.5) * lineSpacing) + (padding * 2);
+
+    // Draw background
+    legendCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    legendCtx.roundRect(padding, padding, boxWidth, boxHeight, padding);
+    legendCtx.fill();
+
+    // Draw text
+    legendCtx.fillStyle = 'black';
+    legendContent.forEach((line, index) => {
+        const x = padding * 2;
+        // initial half line pad
+        const y = (padding * 2) + ((index + 0.5) * lineSpacing);
+        legendCtx.fillText(line.trim(), x, y);
+    });
+
+    // Combine the legend with the scene
+    ctx.drawImage(legendCanvas, 0, 0);
+
+    // Export
+    const dataURL = finalCanvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = `tomography_${sceneParms.viewType}view_${targetWidth}x${targetHeight}.png`;
+    link.click();
+
+    // Restore settings
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
+    renderer.setSize(originalWidth, originalHeight, false);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    renderer.render(scene, camera);
+    */
+}
+
+
+
+
