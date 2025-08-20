@@ -1,9 +1,9 @@
 # Cloud Tomography Visualization
 
-This repository contains code and resources for the cloud tomography visualization work I am doing for Mark Richardson and Linda Forster. The primary components will be:
-* A Python script for converting netCDF files into various formats needed for visualization.
+This repository contains code and resources for an interactive cloud tomography visualization tool.
+The primary components are:
 * A three.JS web application for visualizing said models.
-* Any additional resources needed for this project.
+* Tools for converting 3-D atmospheric volumes and 2-D radiance into formats needed for visualization.
 
 The source netCDF data is not included in this repository as each .nc file is over 700MB.
 
@@ -21,14 +21,23 @@ npm install
 ```
 
 ## Usage
+### Javascript application
+
+In a spare terminal tab (this command will run continuously until you press <kbd>Ctrl</kbd> + <kbd>C</kbd>), run the following command while in the top-level directory of this repository:
+```bash
+npm run dev
+```
+If you lose the tab containing the viewer, it can be found at [localhost:5173](http://localhost:5173/). If you get a message from your browser that says "This site can't be reached" be sure you still have the `npm run dev` command running in a terminal tab.
 
 ### Python scripts
-After pip installing the module, three scripts will be added to your path. The first one, `nc2gltf`, can be used to convert a tomography netCDF file into a 3-D point cloud via its cloud-water mixing ratio data. This file can be viewed in blender, but does not preserve any information about the value contained in the point and cannot be directly colormapped. The usage for this tool is as follows:
+After pip installing the module, three scripts will be added to your path: `nc2gltf`,  `nc2nrrd`, and `ncradiance`.
+
+The first one, `nc2gltf`, can be used to convert a 3-D atmospheric data into a 3-D point cloud via its cloud-water mixing ratio data. The current version is implemented for netCDF file format, assuming synthetic cloud fields from Large Eddy Simulation. This tool can be expanded for other atmospheric components such as aerosol plumes or water vapor. This file can be viewed in blender, but does not preserve any information about the value contained in the point and cannot be directly colormapped. The usage for this tool is as follows:
 ```
 usage: nc2gltf [-h] [-o FILE] [-v VARIABLE] [-r FILE] FILE
 
 positional arguments:
-  FILE                  input file in netCDF (.nc) format, the QC variable is required
+  FILE                  input file in netCDF (.nc) format. Here, the `QC` variable is used for visualizing cloud liquid water content.
 
 options:
   -h, --help            show this help message and exit
@@ -45,7 +54,7 @@ The second tool, `nc2nrrd`, converts a tomography netCDF file into a 3-D raster 
 usage: nc2nrrd [-h] [-o FILE] [-v VARIABLE] [-b BITS] FILE
 
 positional arguments:
-  FILE                  input file in netCDF (.nc) format, the QC variable is required
+  FILE                  input file in netCDF (.nc) format. Here, the `QC` variable is used for visualizing cloud liquid water content.
 
 options:
   -h, --help            show this help message and exit
@@ -61,7 +70,7 @@ The third tool, `ncradiance`, is intended to export radiance data from MISR netC
 usage: ncradiance [-h] [-o FILE] [-v VARIABLE] FILE
 
 positional arguments:
-  FILE                  input file in netCDF (.nc) format, the rad variable is required
+  FILE                  input file in netCDF (.nc) format. Here, the `rad` variable is used for visualizing the nadir radiance field.
 
 options:
   -h, --help            show this help message and exit
@@ -70,14 +79,6 @@ options:
   -v VARIABLE, --variable VARIABLE
                         optionally specify the variable name to convert to an image. default is rad
 ```
-
-### Javascript application
-
-In a spare terminal tab (this command will run continuously until you press <kbd>Ctrl</kbd> + <kbd>C</kbd>), run the following command while in the top-level directory of this repository:
-```bash
-npm run dev
-```
-If you lose the tab containing the viewer, it can be found at [localhost:5173](http://localhost:5173/). If you get a message from your browser that says "This site can't be reached" be sure you still have the `npm run dev` command running in a terminal tab.
 
 ## Other notes
 
