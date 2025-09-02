@@ -1,3 +1,31 @@
+/*
+APACHE LICENSE, VERSION 2.0
+Copyright (c) 2023-25 California Institute of Technology (“Caltech”).
+U.S. Government sponsorship acknowledged.
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are
+permitted provided that the following conditions are met:
+1. Redistributions of source code must retain the above copyright notice, this list of
+   conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list
+   of conditions and the following disclaimer in the documentation and/or other
+   materials provided with the distribution.
+3. Neither the name of Caltech nor its operating division, the Jet Propulsion
+   Laboratory, nor the names of its contributors may be used to endorse or promote
+   products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, 
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
 import * as THREE from 'three';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
@@ -94,6 +122,28 @@ const satParms = {
     //maxTheta: 70,
     // a normal altitude for a cubesat deployed from ISS
     realH: 400
+};
+
+// Animation parameters for Time Step
+const animationParms = {
+    enabled: false, // Start disabled - will be controlled by GUI button
+    playing: false,
+    duration: 5000, // 5 seconds in milliseconds
+    startTime: 0,
+    pausedTime: 0, // Track time when paused
+    minPos: -2,
+    maxPos: 2
+};
+
+// Global controllers object for GUI references
+const controllers = {};
+
+// Video recording parameters
+const recordingParms = {
+    isRecording: false,
+    mediaRecorder: null,
+    recordedChunks: [],
+    stream: null
 };
 
 const cloudParms = {
@@ -916,6 +966,33 @@ function setControlTarget() {
     controls.update();
 }
 
+function updateSatPositions(position) {
+    const scaledPos = -position / 500;
+    const angle = (scaledPos + 0.25) * Math.PI * 2;
+
+    const orbitRadius = groundSize + satParms.height;
+    const x = orbitRadius * Math.cos(angle);
+    const y = orbitRadius * Math.sin(angle);
+    const z = 0;
+
+    const pos = new THREE.Vector3(x, y, z);
+    pos.applyEuler(orbitTrack.rotation);
+    pos.add(orbitTrack.position);
+
+    satelliteGroup.position.copy(pos);
+
+    const center = orbitTrack.position.clone();
+    const direction = center.sub(pos).normalize();
+
+    const quaternion = new THREE.Quaternion();
+    const initialDir = new THREE.Vector3(0, -1, 0);
+    quaternion.setFromUnitVectors(initialDir, direction);
+
+    satelliteGroup.setRotationFromQuaternion(quaternion);
+
+    clipPlane.constant = cloudGroup.position.x - (Math.sin(angle - Math.PI / 2) * 100);
+}
+
 function initGUISimple() {
     const gui = new GUI();
 
@@ -955,7 +1032,6 @@ function initGUISimple() {
         fillLight.target = satelliteGroup;
     }
 
-    const controllers = {};
 
     if (useGltf) {
         function cloudsChanged() {
@@ -1005,34 +1081,62 @@ function initGUISimple() {
         updateLegend(satParms.numSatellites, satParms.maxTheta, computeDs(computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, 6371, satParms.realH)));
     });
 
-    const updateSatPositions = (position) => {
-        const scaledPos = -position / 500;
-        const angle = (scaledPos + 0.25) * Math.PI * 2;
 
-        const orbitRadius = groundSize + satParms.height;
-        const x = orbitRadius * Math.cos(angle);
-        const y = orbitRadius * Math.sin(angle);
-        const z = 0;
-
-        const pos = new THREE.Vector3(x, y, z);
-        pos.applyEuler(orbitTrack.rotation);
-        pos.add(orbitTrack.position);
-
-        satelliteGroup.position.copy(pos);
-
-        const center = orbitTrack.position.clone();
-        const direction = center.sub(pos).normalize();
-
-        const quaternion = new THREE.Quaternion();
-        const initialDir = new THREE.Vector3(0, -1, 0);
-        quaternion.setFromUnitVectors(initialDir, direction);
-
-        satelliteGroup.setRotationFromQuaternion(quaternion);
-
-        clipPlane.constant = cloudGroup.position.x - (Math.sin(angle - Math.PI / 2) * 100);
-    };
 
     controllers.satPos = satelliteFolder.add(satParms, 'pos', -2, 2, 0.1).onChange(updateSatPositions).name('Time Step');
+    
+    // Animation controls
+    const animationControls = {
+        play: function() {
+            animationParms.enabled = true;
+            animationParms.playing = true;
+            if (animationParms.startTime === 0) {
+                animationParms.pausedTime = 0;
+            }
+        },
+        pause: function() {
+            animationParms.playing = false;
+        },
+        stop: function() {
+            animationParms.enabled = false;
+            animationParms.playing = false;
+            animationParms.startTime = 0;
+            animationParms.pausedTime = 0;
+            satParms.pos = 0;
+            updateSatPositions(0);
+            controllers.satPos.updateDisplay();
+        }
+    };
+    
+    satelliteFolder.add(animationControls, 'play').name('▶ Play Animation');
+    satelliteFolder.add(animationControls, 'pause').name('⏸ Pause Animation');
+    satelliteFolder.add(animationControls, 'stop').name('⏹ Stop Animation');
+    
+    // Recording controls
+    const recordingControls = {
+        startRecording: function() {
+            startRecording();
+        },
+        stopRecording: function() {
+            stopRecording();
+        },
+        recordAndPlay: function() {
+            // Start recording and play animation automatically
+            startRecording();
+            animationControls.play();
+            
+            // Auto-stop recording after reaching the full duration
+            setTimeout(() => {
+                animationControls.stop();
+                stopRecording();
+            }, animationParms.duration);
+        }
+    };
+    
+    satelliteFolder.add(recordingControls, 'startRecording').name('Start Recording');
+    satelliteFolder.add(recordingControls, 'stopRecording').name('Stop Recording');
+    satelliteFolder.add(recordingControls, 'recordAndPlay').name('Record Full Animation');
+    
     satelliteFolder.add(satParms, 'maxTheta', 15, 75).onChange(() => {
         satParms.spacing = computePhi(degToRad(satParms.maxTheta), satParms.numSatellites, groundSize, satParms.height);
         updateSatellites();
@@ -1132,8 +1236,6 @@ function initGUI() {
         modelRot: sceneParms.isoRot,
         satHeight: satParms.height
     };
-
-    const controllers = {}; // Object to store GUI controllers
 
     function getCameraRotation() {
         const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
@@ -1471,6 +1573,35 @@ function onWindowResize() {
 function animate(time) {
     controls.update();
 
+    // Animate Time Step parameter if enabled and playing
+    if (animationParms.enabled && animationParms.playing) {
+        if (animationParms.startTime === 0) {
+            animationParms.startTime = time - animationParms.pausedTime;
+        }
+        
+        const elapsed = (time - animationParms.startTime) % (animationParms.duration * 2);
+        let progress = elapsed / animationParms.duration;
+        
+        // Linear animation from -2 to 2
+        if (progress > 1) {
+            progress = 0;
+        }
+        
+        const newPos = animationParms.minPos + (progress * (animationParms.maxPos - animationParms.minPos));
+        satParms.pos = newPos;
+        updateSatPositions(satParms.pos);
+
+        // Update GUI display if controller exists
+        if (controllers.satPos) {
+            controllers.satPos.updateDisplay();
+        }
+    } else if (animationParms.enabled && !animationParms.playing) {
+        // Store paused time to resume from correct position
+        if (animationParms.startTime > 0) {
+            animationParms.pausedTime = time - animationParms.startTime;
+        }
+    }
+
     const delta = time - renderParms.lastTime;
 
     // Only render if enough time has passed
@@ -1494,6 +1625,90 @@ async function captureCanvasImage() {
 async function captureSquareImage() {
     // download a 2k square render
     await captureCanvas(2000, 2000);
+}
+
+// Video recording functions
+function startRecording() {
+    if (recordingParms.isRecording) {
+        console.warn('Recording is already in progress');
+        return;
+    }
+
+    try {
+        // Get canvas stream
+        recordingParms.stream = renderer.domElement.captureStream(30); // 30 FPS
+        
+        // Create MediaRecorder
+        const options = {
+            mimeType: 'video/webm;codecs=vp9', // Try VP9 first
+            videoBitsPerSecond: 8000000 // 8 Mbps
+        };
+        
+        // Fallback to VP8 if VP9 is not supported
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'video/webm;codecs=vp8';
+        }
+        
+        // Fallback to default if neither is supported
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            delete options.mimeType;
+        }
+
+        recordingParms.mediaRecorder = new MediaRecorder(recordingParms.stream, options);
+        recordingParms.recordedChunks = [];
+
+        recordingParms.mediaRecorder.addEventListener('dataavailable', (event) => {
+            if (event.data.size > 0) {
+                recordingParms.recordedChunks.push(event.data);
+            }
+        });
+
+        recordingParms.mediaRecorder.addEventListener('stop', () => {
+            const blob = new Blob(recordingParms.recordedChunks, {
+                type: 'video/webm'
+            });
+            
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `cloud-tomography-animation-${Date.now()}.webm`;
+            
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            URL.revokeObjectURL(url);
+            recordingParms.recordedChunks = [];
+        });
+
+        recordingParms.mediaRecorder.start();
+        recordingParms.isRecording = true;
+        
+        console.log('Recording started');
+        
+    } catch (error) {
+        console.error('Failed to start recording:', error);
+        recordingParms.isRecording = false;
+    }
+}
+
+function stopRecording() {
+    if (!recordingParms.isRecording || !recordingParms.mediaRecorder) {
+        console.warn('No recording in progress');
+        return;
+    }
+
+    recordingParms.mediaRecorder.stop();
+    recordingParms.isRecording = false;
+    
+    // Clean up stream
+    if (recordingParms.stream) {
+        recordingParms.stream.getTracks().forEach(track => track.stop());
+        recordingParms.stream = null;
+    }
+    
+    console.log('Recording stopped');
 }
 
 /*
