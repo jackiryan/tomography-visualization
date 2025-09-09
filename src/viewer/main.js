@@ -131,9 +131,32 @@ const animationParms = {
     duration: 5000, // 5 seconds in milliseconds
     startTime: 0,
     pausedTime: 0, // Track time when paused
-    minPos: -2,
-    maxPos: 2
+    minPos: -1.5,
+    keyPos1: -0.75,
+    keyPos2: 0,
+    maxPos: 1.5,
+    camStartPos: [-2.730477525798925, -0.543171711424262, -14.834111342937499],
+    camStartRot: [-0.5425908638678261, -1.2375824201877772, -0.5179114299063046],
+    camEndPos: [-0.0916129115036914, -0.7963192783488473, -14.78135440303255],
+    camEndRot: [-0.527730752178708, -0.09247999523295797, -0.053775372564466836]
 };
+
+// Initial GUI properties set to the iso view
+const propsScene = {
+    cameraDist: sceneParms.offset,
+    cameraRotX: sceneParms.isoX,
+    cameraRotY: sceneParms.isoY,
+    modelLat: sceneParms.isoLat,
+    modelLon: sceneParms.isoLon,
+    modelRot: sceneParms.isoRot,
+    satHeight: satParms.height
+};
+
+function getCameraRotation() {
+    const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
+    const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
+    return new THREE.Euler(crX, crY, 0, 'XYZ');
+}
 
 // Global controllers object for GUI references
 const controllers = {};
@@ -991,26 +1014,13 @@ function updateSatPositions(position) {
     satelliteGroup.setRotationFromQuaternion(quaternion);
 
     clipPlane.constant = cloudGroup.position.x - (Math.sin(angle - Math.PI / 2) * 100);
+    console.log(camera.position);
+    console.log(camera.rotation);
 }
 
 function initGUISimple() {
     const gui = new GUI();
 
-    // Initial GUI properties set to the iso view
-    const propsScene = {
-        cameraDist: sceneParms.offset,
-        cameraRotX: sceneParms.isoX,
-        cameraRotY: sceneParms.isoY,
-        modelLat: sceneParms.isoLat,
-        modelLon: sceneParms.isoLon,
-        modelRot: sceneParms.isoRot,
-        satHeight: satParms.height
-    };
-    function getCameraRotation() {
-        const crX = THREE.MathUtils.degToRad(propsScene.cameraRotX);
-        const crY = THREE.MathUtils.degToRad(propsScene.cameraRotY);
-        return new THREE.Euler(crX, crY, 0, 'XYZ');
-    }
     const propsLight = {
         posX: 200.0,
         posY: 200.0,
@@ -1129,7 +1139,7 @@ function initGUISimple() {
             setTimeout(() => {
                 animationControls.stop();
                 stopRecording();
-            }, animationParms.duration);
+            }, animationParms.duration * 2); // some jank to account for longer animation
         }
     };
     
@@ -1167,6 +1177,8 @@ function initGUISimple() {
             }
             satParms.pos = 0;
             controllers.satPos.updateDisplay();
+            //console.log(camera.position);
+            //console.log(camera.rotation);
         },
         viewSideProfile: function () {
             // Set propsScene values to side profile values
@@ -1189,6 +1201,8 @@ function initGUISimple() {
             }
             satParms.pos = 0;
             controllers.satPos.updateDisplay();
+            //console.log(camera.position);
+            //console.log(camera.rotation);
         }
     };
     // Add buttons to the GUI
@@ -1583,13 +1597,50 @@ function animate(time) {
         let progress = elapsed / animationParms.duration;
         
         // Linear animation from -2 to 2
-        if (progress > 1) {
+        if (progress > 2.25) {
             progress = 0;
         }
         
-        const newPos = animationParms.minPos + (progress * (animationParms.maxPos - animationParms.minPos));
-        satParms.pos = newPos;
-        updateSatPositions(satParms.pos);
+        // Animate camera position and rotation
+        const startPos = new THREE.Vector3(...animationParms.camStartPos);
+        const endPos = new THREE.Vector3(...animationParms.camEndPos);
+        const startRot = new THREE.Euler(...animationParms.camStartRot);
+        const endRot = new THREE.Euler(...animationParms.camEndRot);
+        const startQuat = new THREE.Quaternion().setFromEuler(startRot);
+        const endQuat = new THREE.Quaternion().setFromEuler(endRot);
+
+        if (progress < 0.5) {
+            const newPos = animationParms.minPos + (2 * progress * (animationParms.keyPos1 - animationParms.minPos));
+            satParms.pos = newPos;
+            updateSatPositions(satParms.pos);
+            camera.position.copy(startPos);
+            const startQuat = new THREE.Quaternion().setFromEuler(startRot);
+            camera.setRotationFromQuaternion(startQuat);
+        } else if (progress < 1) {
+            const newPos = animationParms.keyPos1 + (2 * (progress - 0.5) * (animationParms.keyPos2 - animationParms.keyPos1));
+            satParms.pos = newPos;
+            updateSatPositions(satParms.pos);
+
+            // Interpolate camera position
+            camera.position.lerpVectors(startPos, endPos, 2 * (progress - 0.5));
+            
+            // Interpolate camera rotation
+
+            const currentQuat = new THREE.Quaternion().slerpQuaternions(startQuat, endQuat, 2 * (progress - 0.5));
+            camera.setRotationFromQuaternion(currentQuat);
+        } else if (progress < 1.25) {
+            updateSatPositions(satParms.pos);
+
+            camera.position.copy(endPos);
+            camera.setRotationFromQuaternion(endQuat);
+        } else if (progress > 1.25) {
+            const newPos = animationParms.keyPos2 + ((progress - 1.25) * (animationParms.maxPos - animationParms.keyPos2));
+            satParms.pos = newPos;
+            updateSatPositions(satParms.pos);
+
+            camera.position.copy(endPos);
+            camera.setRotationFromQuaternion(endQuat);
+        }
 
         // Update GUI display if controller exists
         if (controllers.satPos) {
