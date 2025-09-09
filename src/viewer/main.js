@@ -128,17 +128,22 @@ const satParms = {
 const animationParms = {
     enabled: false, // Start disabled - will be controlled by GUI button
     playing: false,
-    duration: 5000, // 5 seconds in milliseconds
+    duration: 10000, // 5 seconds in milliseconds
     startTime: 0,
     pausedTime: 0, // Track time when paused
-    minPos: -1.5,
-    keyPos1: -0.75,
+    minPos: -2.5,
+    keyPos1: -1,
     keyPos2: 0,
-    maxPos: 1.5,
+    maxPos: 2,
+    // Iso3
     camStartPos: [-2.730477525798925, -0.543171711424262, -14.834111342937499],
     camStartRot: [-0.5425908638678261, -1.2375824201877772, -0.5179114299063046],
-    camEndPos: [-0.0916129115036914, -0.7963192783488473, -14.78135440303255],
-    camEndRot: [-0.527730752178708, -0.09247999523295797, -0.053775372564466836]
+    // Zoom2
+    //camEndPos: [-0.0916129115036914, -0.7963192783488473, -14.78135440303255],
+    //camEndRot: [-0.527730752178708, -0.09247999523295797, -0.053775372564466836]
+    // Zoom3
+    camEndPos: [-0.055290903264744326, -0.9981438249329342, -14.992749508491721],
+    camEndRot: [-0.4671151969207102, -0.09790385346685515, -0.049258306382718414]
 };
 
 // Initial GUI properties set to the iso view
@@ -1139,7 +1144,7 @@ function initGUISimple() {
             setTimeout(() => {
                 animationControls.stop();
                 stopRecording();
-            }, animationParms.duration * 2); // some jank to account for longer animation
+            }, animationParms.duration);
         }
     };
     
@@ -1597,7 +1602,7 @@ function animate(time) {
         let progress = elapsed / animationParms.duration;
         
         // Linear animation from -2 to 2
-        if (progress > 2.25) {
+        if (progress > 1) {
             progress = 0;
         }
         
@@ -1609,32 +1614,35 @@ function animate(time) {
         const startQuat = new THREE.Quaternion().setFromEuler(startRot);
         const endQuat = new THREE.Quaternion().setFromEuler(endRot);
 
-        if (progress < 0.5) {
-            const newPos = animationParms.minPos + (2 * progress * (animationParms.keyPos1 - animationParms.minPos));
+        if (progress < 0.25) {
+            const newPos = animationParms.minPos + (4 * progress * (animationParms.keyPos1 - animationParms.minPos));
             satParms.pos = newPos;
             updateSatPositions(satParms.pos);
             camera.position.copy(startPos);
             const startQuat = new THREE.Quaternion().setFromEuler(startRot);
             camera.setRotationFromQuaternion(startQuat);
-        } else if (progress < 1) {
-            const newPos = animationParms.keyPos1 + (2 * (progress - 0.5) * (animationParms.keyPos2 - animationParms.keyPos1));
+        } else if (progress < 0.6) {
+            const linearRate = (1 / 0.35) * (progress - 0.25);
+            const satRate = Math.sin(linearRate * Math.PI / 2);
+            const newPos = animationParms.keyPos1 + (satRate * (animationParms.keyPos2 - animationParms.keyPos1));
             satParms.pos = newPos;
             updateSatPositions(satParms.pos);
 
             // Interpolate camera position
-            camera.position.lerpVectors(startPos, endPos, 2 * (progress - 0.5));
+            //const camRate = Math.sin(linearRate * Math.PI / 2);
+            const camRate = 1 - Math.pow(1 - linearRate, 3);
+            camera.position.lerpVectors(startPos, endPos, camRate);
             
             // Interpolate camera rotation
-
-            const currentQuat = new THREE.Quaternion().slerpQuaternions(startQuat, endQuat, 2 * (progress - 0.5));
+            const currentQuat = new THREE.Quaternion().slerpQuaternions(startQuat, endQuat, camRate);
             camera.setRotationFromQuaternion(currentQuat);
-        } else if (progress < 1.25) {
+        } else if (progress < 0.7) {
             updateSatPositions(satParms.pos);
 
             camera.position.copy(endPos);
             camera.setRotationFromQuaternion(endQuat);
-        } else if (progress > 1.25) {
-            const newPos = animationParms.keyPos2 + ((progress - 1.25) * (animationParms.maxPos - animationParms.keyPos2));
+        } else if (progress > 0.7) {
+            const newPos = animationParms.keyPos2 + (2.5 * (progress - 0.7) * (animationParms.maxPos - animationParms.keyPos2));
             satParms.pos = newPos;
             updateSatPositions(satParms.pos);
 
